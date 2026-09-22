@@ -59,14 +59,22 @@ pip install -r requirements.txt
 
 echo.
 echo [5/5] Checking Ollama...
+set "OLLAMA_CMD="
 where ollama >nul 2>nul
-if errorlevel 1 (
-    echo [!] Ollama not found!
+if not errorlevel 1 set "OLLAMA_CMD=ollama"
+if not defined OLLAMA_CMD if exist "%LOCALAPPDATA%\Programs\Ollama\ollama.exe" set "OLLAMA_CMD=%LOCALAPPDATA%\Programs\Ollama\ollama.exe"
+set "PF86=%ProgramFiles(x86)%"
+if not defined OLLAMA_CMD if exist "%ProgramFiles%\Ollama\ollama.exe" set "OLLAMA_CMD=%ProgramFiles%\Ollama\ollama.exe"
+if not defined OLLAMA_CMD if exist "%PF86%\Ollama\ollama.exe" set "OLLAMA_CMD=%PF86%\Ollama\ollama.exe"
+
+if not defined OLLAMA_CMD (
+    echo [!] Ollama not found in PATH or default folders.
     echo     Download: https://ollama.com/download/windows
-    echo     AFTER install run setup.bat again so that
-    echo     models download to E:\ollama_models
+    echo     If already installed - open a NEW cmd window and
+    echo     run setup.bat again.
 ) else (
-    echo       Ollama found. Download models with:
+    echo       Ollama found: %OLLAMA_CMD%
+    echo       Next step: restart Ollama from tray, then run
     echo       start_download_models.bat
 )
 
