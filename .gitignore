@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Виртуальное окружение (тяжёлое, ставить на диск E вместе с репозиторием)
+venv/
+.venv/
+
+# Тяжёлые данные — живут на диске E, в Git не попадают
+data/pdf/*
+data/videos/*
+data/macros/*
+data/forums/*
+!data/pdf/.gitkeep
+!data/videos/.gitkeep
+!data/macros/.gitkeep
+!data/forums/.gitkeep
+
+output/*
+!output/.gitkeep
+
+chroma_db/
+*.log
+
+# Секреты
+.env
