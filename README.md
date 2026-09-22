@@ -8,12 +8,12 @@
 
 | Что | Где хранится | Почему |
 |---|---|---|
-| Код проекта | `E:\powermill` (этот репозиторий) | лёгкий, но рядом с данными |
-| PDF, видео, макросы | `E:\powermill\data\...` | десятки ГБ |
-| Векторная база ChromaDB | `E:\powermill\chroma_db\` | быстро растёт |
+| Код проекта | `E:\powermill-ai` (этот репозиторий) | лёгкий, но рядом с данными |
+| PDF, видео, макросы | `E:\powermill-ai\data\...` | десятки ГБ |
+| Векторная база ChromaDB | `E:\powermill-ai\chroma_db\` | быстро растёт |
 | Модели Ollama (~4 ГБ) | `E:\ollama_models` | не забивать C: |
 | Кэш HuggingFace (эмбеддинги) | `E:\hf_cache` | авто скачивается |
-| Кэш pip + venv (torch ~2 ГБ) | `E:\pip_cache`, `E:\powermill\venv` | авто скачивается |
+| Кэш pip + venv (torch ~2 ГБ) | `E:\pip_cache`, `E:\powermill-ai\venv` | авто скачивается |
 
 Системный SSD (C:) остаётся свободным. Все пути задаются переменными окружения
 (см. `config.py`, `scripts/set_heavy_paths.bat`).
@@ -21,11 +21,12 @@
 ## Установка (один раз)
 
 ```bat
-:: 1. Клонируй репозиторий на диск E:
+:: 1. Клонируй репозиторий на диск E (ВАЖНО: не E:\powermill —
+::    это папка установки Autodesk, её трогать нельзя!):
 E:
 cd \
-git clone https://github.com/Bergaff/powermill.git powermill
-cd powermill
+git clone -b arena/01a0c92c-powermill https://github.com/Bergaff/powermill.git powermill-ai
+cd powermill-ai
 
 :: 2. Автоустановка: venv, зависимости, папки на E:, переменные окружения
 setup.bat
@@ -33,12 +34,12 @@ setup.bat
 :: 3. Скачай модели Ollama в E:\ollama_models (~4 ГБ)
 start_download_models.bat
 
-:: 4. Положи 22 PDF в:  E:\powermill\data\pdf\
-::    (видео — по желанию в E:\powermill\data\videos\)
+:: 4. Положи 22 PDF в:  E:\powermill-ai\data\pdf\
+::    (видео — по желанию в E:\powermill-ai\data\videos\)
 ```
 
 > Если клонируешь не на E:\ — `setup.bat` всё равно создаст все тяжёлые папки
-> на диске E. Репозиторий желательно держать именно на `E:\powermill`.
+> на диске E. Репозиторий желательно держать именно на `E:\powermill-ai`.
 
 ## Ежедневный запуск
 
@@ -67,7 +68,8 @@ python -m src.bot
 ## Структура
 
 ```
-powermill/                     <- E:\powermill (код в Git)
+powermill-ai/                  <- E:\powermill-ai (код в Git)
+                                 НЕ путать с E:\powermill — это Autodesk!
 ├── config.py                  <- все пути и режимы (ECO/TURBO)
 ├── setup.bat                  <- установка всего на E:
 ├── start_work_chat.bat        <- дневной чат (ECO)
@@ -78,15 +80,15 @@ powermill/                     <- E:\powermill (код в Git)
 │   ├── pdf_parser.py          <- 22 PDF → текст
 │   ├── video_parser.py        <- видео → текст (Whisper)
 │   ├── chunker.py             <- текст → чанки
-│   ├── vectorstore.py         <- чанки → ChromaDB (E:\powermill\chroma_db)
+│   ├── vectorstore.py         <- чанки → ChromaDB (E:\powermill-ai\chroma_db)
 │   ├── rag.py                 <- чат: поиск + Ollama
 │   ├── bot.py                 <- Telegram-бот (aiogram)
 │   └── hardware.py            <- приоритеты CPU: ECO днём / TURBO ночью
-├── data/pdf/                  <- сюда класть PDF      (E:\powermill\data\pdf)
-├── data/videos/               <- сюда класть видео    (E:\powermill\data\videos)
-├── data/macros/               <- сюда класть *.mac    (E:\powermill\data\macros)
-├── chroma_db/                 <- создаётся на E:\powermill\chroma_db
-└── output/                    <- промежуточные файлы  (E:\powermill\output)
+├── data/pdf/                  <- сюда класть PDF      (E:\powermill-ai\data\pdf)
+├── data/videos/               <- сюда класть видео    (E:\powermill-ai\data\videos)
+├── data/macros/               <- сюда класть *.mac    (E:\powermill-ai\data\macros)
+├── chroma_db/                 <- создаётся на E:\powermill-ai\chroma_db
+└── output/                    <- промежуточные файлы  (E:\powermill-ai\output)
 ```
 
 ## Режимы работы

@@ -20,7 +20,7 @@ CODE_DIR = Path(__file__).resolve().parent
 
 # === Корень тяжёлых данных: ТОЛЬКО диск E ===
 # Переопределить можно переменной окружения POWERMILL_DATA_ROOT.
-DATA_ROOT = Path(os.getenv("POWERMILL_DATA_ROOT", "E:/powermill"))
+DATA_ROOT = Path(os.getenv("POWERMILL_DATA_ROOT", "E:/powermill-ai"))
 
 DATA_DIR = DATA_ROOT / "data"
 PDF_DIR = DATA_DIR / "pdf"

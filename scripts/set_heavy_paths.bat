@@ -6,14 +6,14 @@ echo   Saves environment variables via setx.
 echo   Run ONCE (or after Windows reinstall).
 echo =========================================================
 
-setx POWERMILL_DATA_ROOT "E:\powermill"
+setx POWERMILL_DATA_ROOT "E:\powermill-ai"
 setx OLLAMA_MODELS "E:\ollama_models"
 setx HF_HOME "E:\hf_cache"
 setx PIP_CACHE_DIR "E:\pip_cache"
 
 echo.
 echo DONE! Variables saved:
-echo    POWERMILL_DATA_ROOT = E:\powermill     (PDF, videos, ChromaDB)
+echo    POWERMILL_DATA_ROOT = E:\powermill-ai     (PDF, videos, ChromaDB)
 echo    OLLAMA_MODELS       = E:\ollama_models (LLM models)
 echo    HF_HOME             = E:\hf_cache      (embedding cache)
 echo    PIP_CACHE_DIR       = E:\pip_cache     (pip cache)
