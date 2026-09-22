@@ -1,9 +1,9 @@
 @echo off
 chcp 65001 >nul
-title PowerMill AI - Перенос тяжёлого на диск E (навсегда)
+title PowerMill AI - Move heavy data to disk E (permanent)
 echo =========================================================
-echo   Сохраняет переменные окружения через setx.
-echo   Выполни ОДИН раз (или после переустановки Windows).
+echo   Saves environment variables via setx.
+echo   Run ONCE (or after Windows reinstall).
 echo =========================================================
 
 setx POWERMILL_DATA_ROOT "E:\powermill"
@@ -12,15 +12,15 @@ setx HF_HOME "E:\hf_cache"
 setx PIP_CACHE_DIR "E:\pip_cache"
 
 echo.
-echo ✅ Готово! Переменные сохранены:
-echo    POWERMILL_DATA_ROOT = E:\powermill     (PDF, видео, ChromaDB)
-echo    OLLAMA_MODELS       = E:\ollama_models (модели LLM)
-echo    HF_HOME             = E:\hf_cache      (кэш эмбеддингов)
-echo    PIP_CACHE_DIR       = E:\pip_cache     (кэш pip)
+echo DONE! Variables saved:
+echo    POWERMILL_DATA_ROOT = E:\powermill     (PDF, videos, ChromaDB)
+echo    OLLAMA_MODELS       = E:\ollama_models (LLM models)
+echo    HF_HOME             = E:\hf_cache      (embedding cache)
+echo    PIP_CACHE_DIR       = E:\pip_cache     (pip cache)
 echo.
-echo ⚠️ Перезапусти Ollama (Quit в трее → запусти заново),
-echo    чтобы она подхватила OLLAMA_MODELS=E:\ollama_models.
+echo IMPORTANT: restart Ollama (Quit in tray, then start again)
+echo so it picks up OLLAMA_MODELS=E:\ollama_models.
 echo.
-echo Если старые модели уже скачались на C:, перемести их:
+echo If old models already downloaded to C:, move them with:
 echo    robocopy "%USERPROFILE%\.ollama\models" "E:\ollama_models" /E /MOVE
 pause
