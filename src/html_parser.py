@@ -23,8 +23,9 @@ OUTPUT_FILE = OUTPUT_DIR / "parsed_html.txt"
 # Служебные/ненужные для знаний базы пути
 SKIP_PARTS = {"bin", "res", "images", "image", "css", "js", "scripts"}
 
-# Порог: короче — служебная заглушка (TOC, фрейм), не статья
-MIN_TEXT_LEN = 40
+# Порог: короче — служебная заглушка/очень короткая context-подсказка.
+# (15 ловит короткие, но осмысленные contexthelp-термины вроде "3D выборка")
+MIN_TEXT_LEN = 15
 
 
 def decode_html(raw: bytes) -> str:
@@ -137,16 +138,27 @@ def parse_all_help() -> list[dict]:
     short_samples: list[str] = []
     errors = 0
 
+    # статистика: корень -> подпапка -> (найдено, извлечено, сумма символов)
+    stats: dict[str, dict[str, list[int]]] = {}
+
     for root, path in tqdm(all_files, desc="Парсинг HTML"):
         try:
             title, text = html_to_text(path)
-            rel = str(path.relative_to(root))
+            rel = path.relative_to(root)
+            top = rel.parts[0] if len(rel.parts) > 1 else "(root)"
+            st = stats.setdefault(str(root.name), {})
+            cell = st.setdefault(top, [0, 0, 0])
+            cell[0] += 1
+
             if len(text) < MIN_TEXT_LEN:
                 short += 1
                 if len(short_samples) < 8:
                     snip = text[:70].replace("\n", " ")
                     short_samples.append(f"   {len(text):>4} симв.  {rel}  | {snip}")
                 continue
+
+            cell[1] += 1
+            cell[2] += len(text)
             source = f"{root.name}/{rel}"
             pages.append({"title": title, "text": text, "source": source})
         except Exception as e:
@@ -162,8 +174,24 @@ def parse_all_help() -> list[dict]:
             f.write(page["text"] + "\n")
 
     print(f"✅ Извлечено {len(pages)} страниц из {len(all_files)} HTML -> {OUTPUT_FILE}")
+
+    print("\n📊 По подпапкам (найдено / извлечено / сумма символов):")
+    for root_name, st in stats.items():
+        print(f"  [{root_name}]")
+        for sub, (n_found, n_ok, chars) in sorted(
+            st.items(), key=lambda kv: -kv[1][2]
+        ):
+            print(f"    {sub:<28} {n_found:>5} / {n_ok:>5}  {chars:>9} симв.")
+
+    if pages:
+        longest = sorted(pages, key=lambda p: -len(p["text"]))[:5]
+        print("\n📏 Самые длинные статьи (значит, полные тексты есть):")
+        for p in longest:
+            src = p["source"][:70]
+            print(f"    {len(p['text']):>6} симв.  {src}")
+
     if short:
-        print(f"✂ Слишком короткие (заглушки/TOC/пустые): {short}")
+        print(f"\n✂ Короче {MIN_TEXT_LEN} симв. (заглушки/пустые): {short}")
         for s in short_samples:
             print(s)
     if errors:
