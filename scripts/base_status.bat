@@ -3,12 +3,13 @@ chcp 65001 >nul
 title PowerMill AI - состояние базы знаний
 cd /d "%~dp0\.."
 
-if not exist "venv\Scripts\python.exe" (
-    echo [!] Нет venv - запусти setup.bat
-    pause
-    exit /b 1
+if exist "venv\Scripts\python.exe" (
+    call venv\Scripts\activate
+) else (
+    echo [!] Виртуального окружения нет - работаю системным Python.
+    echo     Если чего-то не хватает - запусти setup_light.bat (1 минута)
+    echo.
 )
-call venv\Scripts\activate
 python -m scripts.base_status
 echo.
 pause

@@ -11,14 +11,13 @@ echo   (там, где он на самом деле лежит)
 echo =========================================================
 echo.
 
-if not exist "venv\Scripts\python.exe" (
-    echo [!] Виртуальное окружение не найдено - запусти setup.bat
+if exist "venv\Scripts\python.exe" (
+    call venv\Scripts\activate
+) else (
+    echo [!] Виртуального окружения нет - работаю системным Python.
+    echo     Если чего-то не хватает - запусти setup_light.bat (1 минута)
     echo.
-    pause
-    exit /b 1
 )
-
-call venv\Scripts\activate
 
 python -m scripts.preflight parse
 if errorlevel 1 (

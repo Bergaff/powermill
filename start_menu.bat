@@ -30,10 +30,12 @@ echo     13  -  Подготовить ОТЧЁТ для отправки в ч�
 echo     14  -  Скачать модели Ollama (~5 ГБ)
 echo     15  -  Починить Ollama (не отвечает)
 echo     16  -  Скачать pytorch (если не влез)
+echo     17  -  Обновить программу из Git (git pull)
+echo     18  -  Быстрая установка       (разбор+поиск, 1 минута)
 echo.
 echo      0  -  Выход
 echo.
-set /p choice="   Выбор (0-16): "
+set /p choice="   Выбор (0-18): "
 
 if "%choice%"=="1"  goto chat
 if "%choice%"=="2"  goto search
@@ -51,6 +53,8 @@ if "%choice%"=="13" goto report
 if "%choice%"=="14" goto models
 if "%choice%"=="15" goto fixollama
 if "%choice%"=="16" goto torch
+if "%choice%"=="17" goto update
+if "%choice%"=="18" goto light
 if "%choice%"=="0"  exit /b 0
 goto menu
 
@@ -116,4 +120,12 @@ goto menu
 
 :torch
 call "%~dp0scripts\install_torch.bat"
+goto menu
+
+:update
+call "%~dp0update_from_git.bat"
+goto menu
+
+:light
+call "%~dp0setup_light.bat"
 goto menu

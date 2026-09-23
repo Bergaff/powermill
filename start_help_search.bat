@@ -11,14 +11,13 @@ echo       start_parse_help.bat
 echo =========================================================
 echo.
 
-if not exist "venv\Scripts\python.exe" (
-    echo [!] Виртуальное окружение не найдено.
-    echo     Сначала запусти setup.bat
-    pause
-    exit /b 1
+if exist "venv\Scripts\python.exe" (
+    call venv\Scripts\activate
+) else (
+    echo [!] Виртуального окружения нет - работаю системным Python.
+    echo     Если чего-то не хватает - запусти setup_light.bat (1 минута)
+    echo.
 )
-
-call venv\Scripts\activate
 
 if not "%~1"=="" (
     python -m src.help_search %*
