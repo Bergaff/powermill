@@ -4,7 +4,10 @@
 import re
 from pathlib import Path
 
-import fitz  # PyMuPDF
+try:
+    import pymupdf as fitz  # PyMuPDF >= 1.24
+except ImportError:  # старый alias
+    import fitz
 from tqdm import tqdm
 
 from config import OUTPUT_DIR, PDF_DIR
