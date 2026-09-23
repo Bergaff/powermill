@@ -5,22 +5,27 @@ set APP_MODE=turbo
 echo =======================================================
 echo   PowerMill AI - TURBO MODE (run at night)
 echo   * Maximum CPU power
-echo   * VRAM stays loaded between steps
+echo   * Builds knowledge base on disk E
 echo =======================================================
 cd /d "%~dp0"
 call venv\Scripts\activate
 
-echo [1/3] Parsing PDF files from E:\powermill-ai\data\pdf ...
+echo [1/4] Parsing PDF files from E:\powermill-ai\data\pdf ...
 python -m src.pdf_parser
 if errorlevel 1 echo    (skipped or error - continuing)
 
 echo.
-echo [2/3] Transcribing videos from E:\powermill-ai\data\videos (if any)...
+echo [2/4] Parsing local HTML help (PowerMill strategies, tools, PML)...
+python -m src.html_parser
+if errorlevel 1 echo    (no help folder or error - continuing)
+
+echo.
+echo [3/4] Transcribing videos from E:\powermill-ai\data\videos (if any)...
 python -m src.video_parser
 if errorlevel 1 echo    (no videos or error - continuing)
 
 echo.
-echo [3/3] Building ChromaDB vector store on E:\powermill-ai\chroma_db ...
+echo [4/4] Building ChromaDB vector store on E:\powermill-ai\chroma_db ...
 python -m src.vectorstore
 
 echo.

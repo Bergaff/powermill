@@ -33,6 +33,16 @@ OUTPUT_DIR = DATA_ROOT / "output"
 for _d in (PDF_DIR, VIDEO_DIR, MACRO_DIR, FORUM_DIR, CHROMA_DIR, OUTPUT_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
+# === Локальная HTML-справка PowerMill (только чтение, НЕ создаём) ===
+# Обычно: <папка PowerMill>\lib\locale\C  (лежит parameters.html, index.html...)
+# Найди точный путь: scripts\find_help.bat
+HELP_DIR = Path(
+    os.getenv(
+        "POWERMILL_HELP_DIR",
+        "E:/powermill 2026/PowerMill 2026/lib/locale/C",
+    )
+)
+
 # === Модели Ollama ===
 # 3B — минимум (уже скачаны). При 12 ГБ VRAM рекомендуется 7B:
 #   ollama pull qwen2.5:7b
