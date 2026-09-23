@@ -106,6 +106,15 @@ powermill-ai/                  <- E:\powermill-ai (код в Git)
 - Модели: `qwen2.5:3b` (чат) + `qwen2.5-coder:3b` (PML) — влезают в 4 ГБ
 - Эмбеддинги: `paraphrase-multilingual-MiniLM-L12-v2` (мультиязычные RU/EN, ~500 МБ, CPU)
 
+## Источники знаний
+
+| Источник | Команда | Что даёт |
+|---|---|---|
+| PDF из `data\pdf` | `start_night_indexing.bat` | Robot Setup и пр. |
+| Локальная HTML (PML PARREF) | то же, шаг 2 | Справочник объектов/стратегий PML |
+| **Онлайн help.autodesk.com** | **`start_web_scrape.bat`** | User Guide, макросы, стратегии |
+| Оффлайн-справка Autodesk | [скачать](https://www.autodesk.com/powermill-2026-help-download-enu) → `POWERMILL_HELP_DIR` | Полная копия Help офлайн |
+
 ## Требования
 
 - [Python 3.10+](https://www.python.org/downloads/) (Add to PATH)

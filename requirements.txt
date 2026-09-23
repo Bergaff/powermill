@@ -4,6 +4,9 @@ PyMuPDF>=1.24.0
 # HTML парсинг (локальная справка PowerMill)
 beautifulsoup4>=4.12.0
 
+# Онлайн-справка help.autodesk.com
+requests>=2.31.0
+
 # Чанкинг
 langchain>=0.2.16
 langchain-community>=0.2.16

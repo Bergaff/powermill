@@ -89,3 +89,16 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
 # === Telegram ===
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+
+# === Скраббер онлайн-справки help.autodesk.com ===
+WEB_HELP_BASE = "https://help.autodesk.com/view/PWRM/2026/ENU/"
+WEB_HELP_MAX_PAGES = int(os.getenv("WEB_HELP_MAX_PAGES", "500"))
+WEB_HELP_DELAY = float(os.getenv("WEB_HELP_DELAY", "0.4"))  # сек между запросами
+WEB_HELP_TIMEOUT = int(os.getenv("WEB_HELP_TIMEOUT", "30"))
+# Точки входа: главная + гайд по макросам + MTD + essential skills (резцы/траектории)
+WEB_HELP_SEEDS = [
+    "PWRM-MACROS-MACROS",
+    "PWRM-MTD-INTRODUCTION",
+    "GUID-D10500A6-2DDD-4418-897F-6725AB69B579",   # User Interface and Part Setup
+    "GUID-9E6A4662-8067-4A2E-890B-80716707114D",   # Introduction to Tools and Toolpaths
+]
