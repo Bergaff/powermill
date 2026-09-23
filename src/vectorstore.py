@@ -75,7 +75,19 @@ class PowerMillVectorStore:
         return hits
 
     def rebuild(self):
-        """Полная пересборка базы из всех источников."""
+        """Полная пересборка базы из всех источников.
+
+        Сначала ГОТОВЯТСЯ чанки, и только потом удаляется старая коллекция —
+        чтобы при сбое/прерывании база не осталась пустой.
+        """
+        chunks = chunk_all_parsed_docs()
+        if not chunks:
+            print(
+                "⚠️ Нет данных для пересборки! Сначала запусти "
+                "start_reindex_help.bat (или start_night_indexing.bat)."
+            )
+            return
+
         try:
             self.client.delete_collection(COLLECTION_NAME)
         except Exception:
@@ -84,11 +96,7 @@ class PowerMillVectorStore:
             name=COLLECTION_NAME,
             metadata={"hnsw:space": "cosine"},
         )
-        chunks = chunk_all_parsed_docs()
-        if chunks:
-            self.add_chunks(chunks)
-        else:
-            print("⚠️ Нет данных! Сначала запусти src.pdf_parser (и при наличии — video_parser).")
+        self.add_chunks(chunks)
 
 
 if __name__ == "__main__":

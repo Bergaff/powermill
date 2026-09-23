@@ -127,7 +127,10 @@ class PowerMillAI:
 def _print_search_results(query: str, ai: PowerMillAI) -> None:
     hits = ai.search_debug(query)
     if not hits:
-        print("(база пуста — сначала прогони start_night_indexing.bat)")
+        print(
+            "(нет результатов поиска — база пуста или повреждена;\n"
+            " запусти start_reindex_help.bat, он пересоберёт её)"
+        )
         return
     print(f"Найдено для: {query!r}")
     print(f"Порог релевантности: {SOURCE_MAX_DISTANCE} "
