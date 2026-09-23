@@ -104,7 +104,7 @@ powermill-ai/                  <- E:\powermill-ai (код в Git)
 
 - Windows 10/11, i5, 16 ГБ RAM, RTX 3060 4 ГБ VRAM
 - Модели: `qwen2.5:3b` (чат) + `qwen2.5-coder:3b` (PML) — влезают в 4 ГБ
-- Эмбеддинги: `all-MiniLM-L6-v2` (~90 МБ, CPU)
+- Эмбеддинги: `paraphrase-multilingual-MiniLM-L12-v2` (мультиязычные RU/EN, ~500 МБ, CPU)
 
 ## Требования
 

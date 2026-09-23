@@ -42,8 +42,13 @@ for _d in (PDF_DIR, VIDEO_DIR, MACRO_DIR, FORUM_DIR, CHROMA_DIR, OUTPUT_DIR):
 LLM_MODEL = os.getenv("LLM_MODEL", "qwen2.5:3b")
 LLM_CODE_MODEL = os.getenv("LLM_CODE_MODEL", "qwen2.5-coder:3b")
 
-# Эмбеддинги — лёгкие, ~90 МБ, работают на CPU
-EMBEDDING_MODEL = "all-MiniLM-L6-v2"
+# Эмбеддинги — мультиязычные (русский запрос ↔ английская документация).
+# ~500 МБ, кэш в E:\hf_cache, работает на CPU.
+# Смена модели требует ПОЛНОЙ пересборки базы: python -m src.vectorstore
+EMBEDDING_MODEL = os.getenv(
+    "EMBEDDING_MODEL",
+    "paraphrase-multilingual-MiniLM-L12-v2",
+)
 
 # === RAG ===
 # Порог релевантности (cosine distance): фрагменты дальше этого
