@@ -4,6 +4,9 @@
 BFS-обход статей по ссылкам ?guid=..., текст сохраняется
 в output/parsed_web.txt (тем же форматом, что pdf/html-парсеры).
 
+Против 403 (бот-защита Autodesk) использует curl_cffi
+имитацию TLS-отпечатка Chrome; без него — обычный requests.
+
 Запуск:  python -m src.web_scraper
 Стоп:    Ctrl+C (прогресс сохраняется, при следующем запуске продолжит)
 """
@@ -12,9 +15,8 @@ import re
 import time
 from collections import deque
 from pathlib import Path
-from urllib.parse import urljoin, urlparse, parse_qs
+from urllib.parse import urljoin
 
-import requests
 from bs4 import BeautifulSoup
 from tqdm import tqdm
 
@@ -27,19 +29,39 @@ from config import (
     WEB_HELP_TIMEOUT,
 )
 
+try:
+    from curl_cffi import requests as cffi_requests
+    HAS_CFFI = True
+except ImportError:
+    cffi_requests = None
+    HAS_CFFI = False
+
+try:
+    import requests as py_requests
+except ImportError:
+    py_requests = None
+
 OUTPUT_FILE = OUTPUT_DIR / "parsed_web.txt"
 STATE_FILE = OUTPUT_DIR / "web_scrape_state.json"
 
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "PowerMillAI-KB/1.0 (+personal knowledge base)"
-    )
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/126.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9,ru;q=0.8",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Referer": "https://help.autodesk.com/",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "same-origin",
+    "Upgrade-Insecure-Requests": "1",
 }
 
 GUID_RE = re.compile(r"guid=([A-Za-z0-9\-_%.]+)")
 
-# Мусорные надписи в конце каждой статьи
 FOOTER_MARKERS = (
     "Was this information helpful",
     "Sign In to Autodesk",
@@ -53,21 +75,40 @@ def _page_url(guid: str | None) -> str:
     return f"{WEB_HELP_BASE}?guid={guid}"
 
 
-def _guid_from_url(url: str) -> str | None:
-    m = GUID_RE.search(url)
-    return m.group(1) if m else None
+def fetch(url: str, timeout: int) -> tuple[str | None, int]:
+    """Возвращает (html|None, status_code)."""
+    if HAS_CFFI:
+        try:
+            resp = cffi_requests.get(
+                url,
+                headers=HEADERS,
+                timeout=timeout,
+                impersonate="chrome",
+                allow_redirects=True,
+            )
+            code = resp.status_code
+            if code == 403:
+                print("  ⚠ HTTP 403 даже с impersonate Chrome")
+            if code != 200:
+                print(f"  ⚠ HTTP {code}: {url}")
+                return None, code
+            return resp.text, code
+        except Exception as e:
+            print(f"  ⚠ curl_cffi ошибка: {e}")
+            return None, 0
 
-
-def fetch(url: str, timeout: int) -> str | None:
+    if py_requests is None:
+        print("  ⚠ Ни curl_cffi, ни requests не установлены: pip install curl_cffi requests")
+        return None, 0
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=timeout, allow_redirects=True)
+        resp = py_requests.get(url, headers=HEADERS, timeout=timeout, allow_redirects=True)
         if resp.status_code != 200:
             print(f"  ⚠ HTTP {resp.status_code}: {url}")
-            return None
-        return resp.text
-    except requests.RequestException as e:
+            return None, resp.status_code
+        return resp.text, resp.status_code
+    except py_requests.RequestException as e:
         print(f"  ⚠ Ошибка сети: {e}")
-        return None
+        return None, 0
 
 
 def extract_title(soup: BeautifulSoup) -> str:
@@ -76,13 +117,11 @@ def extract_title(soup: BeautifulSoup) -> str:
         return h1.get_text(strip=True)
     if soup.title and soup.title.string:
         t = soup.title.string.strip()
-        t = re.sub(r"\s*\|\s*Autodesk\s*$", "", t)
-        return t
+        return re.sub(r"\s*\|\s*Autodesk\s*$", "", t)
     return "Untitled"
 
 
 def extract_content_text(soup: BeautifulSoup) -> str:
-    """Убираем хром (навигацию/подвал) и вытаскиваем тело статьи."""
     for tag in soup(["script", "style", "noscript", "svg"]):
         tag.decompose()
     for sel in (
@@ -96,14 +135,8 @@ def extract_content_text(soup: BeautifulSoup) -> str:
 
     node = None
     for sel in (
-        "article",
-        "main",
-        "#content",
-        ".content",
-        ".topic",
-        ".article-content",
-        "#body",
-        "body",
+        "article", "main", "#content", ".content",
+        ".topic", ".article-content", "#body", "body",
     ):
         found = soup.select_one(sel)
         if found is not None and len(found.get_text(strip=True)) > 200:
@@ -113,8 +146,6 @@ def extract_content_text(soup: BeautifulSoup) -> str:
         node = soup
 
     text = node.get_text("\n")
-
-    # Обрезать мусорный хвост статьи
     for marker in FOOTER_MARKERS:
         idx = text.find(marker)
         if idx > 0:
@@ -122,22 +153,19 @@ def extract_content_text(soup: BeautifulSoup) -> str:
 
     lines = [ln.strip() for ln in text.splitlines()]
     text = "\n".join(ln for ln in lines if ln)
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    return text.strip()
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
 def discover_guids(html: str, base_url: str) -> list[str]:
-    """Все guid-ссылки со страницы (навигация + тело)."""
-    found = []
+    found: list[str] = []
     for m in re.finditer(r'''(?:href|data-href)=["']([^"']*\?guid=[^"']+)["']''', html):
-        guid = _guid_from_url(urljoin(base_url, m.group(1)))
-        if guid:
-            found.append(guid)
+        gm = GUID_RE.search(urljoin(base_url, m.group(1)))
+        if gm:
+            found.append(gm.group(1))
     for m in GUID_RE.finditer(html):
         found.append(m.group(1))
-    # дедуп, сохраняя порядок
-    seen = set()
-    ordered = []
+    seen: set[str] = set()
+    ordered: list[str] = []
     for g in found:
         if g not in seen:
             seen.add(g)
@@ -164,24 +192,41 @@ def save_state(visited: set[str], good: int) -> None:
 
 def crawl() -> int:
     visited, already_good = load_state()
+    # Если ни одной статьи не вытащили (все 403 и т.п.) — начинаем с чистого листа,
+    # иначе сиды будут считаться «посещёнными» и повторный запуск не даст ничего.
+    if already_good == 0:
+        if visited:
+            print(f"♻ Прошлый запуск не дал статей (visited={len(visited)}) — сбрасываю состояние")
+        visited = set()
+        if STATE_FILE.exists():
+            try:
+                STATE_FILE.unlink()
+            except OSError:
+                pass
+
     queue: deque[str | None] = deque()
 
     for seed in WEB_HELP_SEEDS:
         if seed not in visited:
             queue.append(seed)
     if "HOME" not in visited:
-        queue.append(None)  # главная без guid
+        queue.append(None)
 
     if visited:
         print(f"↻ Возобновление: уже посещено {len(visited)}, статей {already_good}")
 
-    # Дозапись при продолжении
-    mode = "a" if visited and OUTPUT_FILE.exists() else "w"
-    good = already_good if mode == "a" else 0
+    mode_append = bool(visited) and OUTPUT_FILE.exists() and already_good > 0
+    good = already_good if mode_append else 0
+    wrote_any = mode_append
 
+    engine = "curl_cffi (Chrome impersonate)" if HAS_CFFI else "requests (без impersonate)"
     print(f"🌐 База: {WEB_HELP_BASE}")
+    print(f"   HTTP-движок: {engine}")
     print(f"   Лимит страниц: {WEB_HELP_MAX_PAGES}, пауза: {WEB_HELP_DELAY}s")
+    if not HAS_CFFI:
+        print("   ⚠ Рекомендуется: pip install curl_cffi  (обход 403)")
 
+    consecutive_403 = 0
     pbar = tqdm(total=WEB_HELP_MAX_PAGES, initial=len(visited), desc="Скрапинг",
                 unit="pg", position=0)
 
@@ -193,7 +238,25 @@ def crawl() -> int:
                 continue
 
             url = _page_url(guid)
-            html = fetch(url, WEB_HELP_TIMEOUT)
+            html, status = fetch(url, WEB_HELP_TIMEOUT)
+
+            if status == 403:
+                consecutive_403 += 1
+                visited.add(key)
+                if consecutive_403 >= 3:
+                    print("\n🛑 Трижды HTTP 403 подряд — Autodesk блокирует скрапинг.")
+                    print("   Фиксы (по порядку):")
+                    print("   1) pip install curl_cffi   (если ещё не стоит)")
+                    print("   2) del E:\\powermill-ai\\output\\web_scrape_state.json  и повтори")
+                    print("   3) Поставь Оффлайн-справку:")
+                    print("      https://www.autodesk.com/powermill-2026-help-download-enu")
+                    print("      затем scripts\\find_help.bat + POWERMILL_HELP_DIR")
+                    break
+                save_state(visited, good)
+                pbar.update(1)
+                time.sleep(max(WEB_HELP_DELAY, 2.0))
+                continue
+            consecutive_403 = 0
             visited.add(key)
 
             if html:
@@ -201,17 +264,16 @@ def crawl() -> int:
                 title = extract_title(soup)
                 text = extract_content_text(soup)
 
-                # SPA-оболочка без текста — считаем неудачей, но guid уже «посещён»
                 if len(text) > 300 and "guid" in html:
-                    with open(OUTPUT_FILE, "a" if mode == "a" or good else "w",
-                              encoding="utf-8") as f:
+                    write_mode = "a" if wrote_any else "w"
+                    with open(OUTPUT_FILE, write_mode, encoding="utf-8") as f:
                         f.write(f"\n{'=' * 60}\n")
                         f.write(f"Источник: {key} | Заголовок: {title}\n")
                         f.write(f"URL: {url}\n")
                         f.write(f"{'=' * 60}\n")
                         f.write(text + "\n")
+                    wrote_any = True
                     good += 1
-                    # открыть новые guid-ссылки
                     for new_guid in discover_guids(html, url):
                         if new_guid not in visited:
                             queue.append(new_guid)
@@ -233,9 +295,8 @@ def crawl() -> int:
     print(f"💾 {OUTPUT_FILE}")
     if good == 0:
         print(
-            "⚠ Не извлечён текст. Возможно help.autodesk.com отдаёт SPA-оболочку.\n"
-            "  Тогда ставь Оффлайн-справку: https://www.autodesk.com/powermill-2026-help-download-enu\n"
-            "  и укажи POWERMILL_HELP_DIR на её папку (найти: scripts\\find_help.bat)."
+            "⚠ Текст не извлечён. См. сообщения выше (403 / SPA).\n"
+            "  Оффлайн-справка: https://www.autodesk.com/powermill-2026-help-download-enu"
         )
     return good
 
