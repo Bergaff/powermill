@@ -1,35 +1,54 @@
 @echo off
 chcp 65001 >nul
-title PowerMill AI [TURBO - night indexing]
+title PowerMill AI [TURBO - ночная индексация]
 set APP_MODE=turbo
-echo =======================================================
-echo   PowerMill AI - TURBO MODE (run at night)
-echo   * Maximum CPU power
-echo   * Builds knowledge base on disk E
-echo =======================================================
 cd /d "%~dp0"
+
+echo =========================================================
+echo   НОЧНАЯ ПОЛНАЯ ИНДЕКСАЦИЯ (режим TURBO)
+echo   PDF -> справка HTML -> видео -> векторная база
+echo   Запускай на ночь: загрузка CPU полная.
+echo =========================================================
+echo.
+
+if not exist "venv\Scripts\python.exe" (
+    echo [!] Виртуальное окружение не найдено - запусти setup.bat
+    echo.
+    pause
+    exit /b 1
+)
+
 call venv\Scripts\activate
 
-echo [1/4] Parsing PDF files from E:\powermill-ai\data\pdf ...
+echo [1/4] PDF-документация из data\pdf ...
 python -m src.pdf_parser
-if errorlevel 1 echo    (skipped or error - continuing)
+if errorlevel 1 echo       ^(пропускаю: нет PDF или ошибка - не страшно^)
 
 echo.
-echo [2/4] Parsing offline HTML Help + PML reference...
+echo [2/4] Оффлайн-справка PowerMill + индекс поиска ...
 python -m src.html_parser
-if errorlevel 1 echo    (no help folder or error - continuing)
+if errorlevel 1 echo       ^(справка не найдена - scripts\set_help_path.bat^)
+python -m src.help_search --rebuild
 
 echo.
-echo [3/4] Transcribing videos from E:\powermill-ai\data\videos (if any)...
+echo [3/4] Видеоуроки из data\videos (транскрипция Whisper)...
 python -m src.video_parser
-if errorlevel 1 echo    (no videos or error - continuing)
+if errorlevel 1 echo       ^(пропускаю: нет видео или ошибка^)
 
 echo.
-echo [4/4] Building ChromaDB vector store on E:\powermill-ai\chroma_db ...
+echo [4/4] Векторная база ChromaDB на диске E: ...
 python -m src.vectorstore
+if errorlevel 1 (
+    echo [!] Не удалось собрать векторную базу
+    echo     Проверь: scripts\install_torch.bat
+    echo     Отчёт:  scripts\make_report.bat
+)
 
 echo.
-echo =======================================================
-echo   DONE! Now you can run start_work_chat.bat
-echo =======================================================
+python -m scripts.base_status
+echo.
+echo =========================================================
+echo   НОЧНАЯ ИНДЕКСАЦИЯ ЗАВЕРШЕНА
+echo   Утром: start_work_chat.bat
+echo =========================================================
 pause

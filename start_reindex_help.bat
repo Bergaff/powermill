@@ -1,37 +1,51 @@
 @echo off
 chcp 65001 >nul
-title PowerMill AI - Reindex offline Help
+title PowerMill AI - пересборка векторной базы
+set APP_MODE=turbo
 cd /d "%~dp0"
+
+echo =========================================================
+echo   ПЕРЕСБОРКА ВЕКТОРНОЙ БАЗЫ (ChromaDB на диске E:)
+echo   Долго: эмбеддинги считаются на CPU (~10-60 минут).
+echo   Лучше запускать ночью или через start_night_indexing.bat
+echo =========================================================
+echo.
+
+if not exist "venv\Scripts\python.exe" (
+    echo [!] Виртуальное окружение не найдено - запусти setup.bat
+    echo.
+    pause
+    exit /b 1
+)
+
 call venv\Scripts\activate
 
-echo =========================================================
-echo   Parse offline HTML Help + PML reference
-echo   and rebuild ChromaDB on disk E.
-echo =========================================================
-echo.
-
-echo [1/2] Parsing HTML help...
-python -m src.html_parser
+python -m scripts.preflight reindex
 if errorlevel 1 (
-    echo [!] html_parser failed
+    echo.
     pause
     exit /b 1
 )
 
 echo.
-echo [2/2] Rebuilding vector store...
+echo Начинаю. Не выключай компьютер. Прервать - Ctrl+C.
+echo.
+
 python -m src.vectorstore
 if errorlevel 1 (
-    echo [!] vectorstore failed
+    echo.
+    echo [!] Пересборка не удалась.
+    echo     Если ошибка про torch - запусти scripts\install_torch.bat
+    echo     Подготовить отчёт: scripts\make_report.bat
+    echo.
     pause
     exit /b 1
 )
 
 echo.
+python -m scripts.base_status
+echo.
 echo =========================================================
-echo   DONE. Start chat:  start_work_chat.bat
-echo   Test inside chat:
-echo     /sources tool selection
-echo     /sources Offset Area Clearance
+echo   ГОТОВО. Общаться с ассистентом: start_work_chat.bat
 echo =========================================================
 pause

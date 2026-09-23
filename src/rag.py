@@ -478,7 +478,7 @@ def main() -> None:
     ap.add_argument("--command", default="", help="команда для --once: ask/macro/"
                                                   "cutting/error/compare/sources/stats")
     ap.add_argument("--no-llm", action="store_true",
-                    help="без Ollama: только поиск (для проверки базы знаний)")
+                    help="без Ollama: только поиск по справке (проверка базы знаний)")
     args = ap.parse_args()
 
     if args.command == "cutting" or (args.once and args.once.lower().startswith("/cutting")):
@@ -486,27 +486,32 @@ def main() -> None:
         print(cutting.answer(text or "")[0])
         return
 
+    # Без ИИ: только поиск по справке (ключевые слова) — работает всегда
+    if args.no_llm and not args.once:
+        from src.help_search import interactive
+
+        interactive()
+        return
+
     if args.once:
         if args.no_llm or args.command in {"sources", "stats"}:
-            from src.help_search import HelpSearch
+            from src.help_search import HelpSearch, print_hits
 
             hs = HelpSearch()
             hs.ensure_index()
             if args.command == "stats":
                 print(hs.stats())
                 return
-            query = args.once
-            hits = hs.search(query, top_k=8)
+            hits = hs.search(args.once, top_k=8)
             if not hits:
                 print("Ничего не найдено.")
                 return
-            for i, h in enumerate(hits, 1):
-                print(f"{i}. [{h.get('found_by', '?')}] {h['breadcrumb'][:90]}")
-                print(f"   {h['text'][:200]}\n")
+            print_hits(hits)
             return
         ai = PowerMillAI(verbose=False)
-        print(handle_command(f"/{args.command} {args.once}".strip() if args.command else args.once,
-                             ai) and "" or "")
+        command_line = (f"/{args.command} {args.once}".strip()
+                        if args.command else args.once)
+        handle_command(command_line, ai)
         return
 
     run_chat()

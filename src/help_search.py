@@ -246,13 +246,50 @@ class HelpSearch:
         }
 
 
+def print_hits(hits: list[dict], preview: int = 300) -> None:
+    for i, hit in enumerate(hits, 1):
+        print(f"\n{i}. {hit['breadcrumb'] or hit['title']}   [{hit['found_by']}]")
+        print(f"   {hit['text'][:preview].replace(chr(10), ' ')}")
+        print(f"   файл: {hit['source']}")
+
+
+def interactive(top_k: int = 6) -> None:
+    """Поиск по справке без ИИ и без векторов — мгновенно, только ключевые слова."""
+    hs = HelpSearch()
+    if hs.is_stale():
+        hs.build()
+    print("=" * 58)
+    print("  ПОИСК ПО СПРАВКЕ PowerMill (без ИИ, мгновенный)")
+    print(f"  Страниц в индексе: {hs.count()}")
+    print("  Введи запрос. Пустая строка — выход.")
+    print("=" * 58)
+
+    while True:
+        try:
+            query = input("\n🔎 Что ищем: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nВыход.")
+            return
+        if not query or query.lower() in {"q", "й", "exit", "выход"}:
+            print("Выход.")
+            return
+        hits = hs.search(query, top_k=top_k)
+        if not hits:
+            print("Ничего не найдено. Попробуй один-два ключевых слова "
+                  "(например: «Swarf», «границы», «врезание»).")
+            continue
+        print_hits(hits)
+
+
 if __name__ == "__main__":
     import sys
 
     hs = HelpSearch()
     if "--rebuild" in sys.argv or hs.is_stale():
         hs.build()
-    print(f"Страниц в FTS-индексе: {hs.count()}")
-    if len(sys.argv) > 1 and not sys.argv[1].startswith("--"):
-        for hit in hs.search(" ".join(sys.argv[1:]), top_k=5):
-            print(f"  {hit['score']:8.2f}  {hit['breadcrumb'][:70]}\n      {hit['text'][:110]}")
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    if args:
+        print(f"Страниц в FTS-индексе: {hs.count()}")
+        print_hits(hs.search(" ".join(args), top_k=5), preview=120)
+    else:
+        interactive()

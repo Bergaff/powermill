@@ -472,8 +472,52 @@ def answer(text: str) -> tuple[str, dict]:
     return out, res.as_dict()
 
 
+def interactive() -> None:
+    """Мастер расчёта: спрашивает материал/инструмент/операцию по-русски."""
+    print("=" * 58)
+    print("  КАЛЬКУЛЯТОР РЕЖИМОВ РЕЗАНИЯ PowerMill")
+    print("  S — обороты, F — минутная подача, ap/ae — глубины")
+    print("=" * 58)
+    print("  Enter без ввода = значение по умолчанию (сталь 40Х, D16, черновая)")
+    print("  Вместо ответа можно написать q — выход\n")
+
+    while True:
+        try:
+            material = input("Материал   (Сталь 40Х / 12Х18Н10Т / Д16Т / СЧ20): ").strip()
+            tool = input("Инструмент (фреза D16 z4 / сферическая D8 / торцевая D63): ").strip()
+            op = input("Операция   (черновая / получистовая / чистовая / hsm): ").strip()
+            limits = input("Ограничения (макс. обороты, кВт — можно пусто): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nВыход.")
+            return
+
+        if any(v.lower() in {"q", "й", "quit", "exit", "выход"}
+               for v in (material, tool, op, limits)):
+            print("Выход.")
+            return
+
+        query = ", ".join(p for p in (material, tool, op, limits) if p)
+        if not query:
+            query = "Сталь 40Х, фреза D16, черновая"
+
+        print()
+        print(answer(query)[0])
+        print()
+        try:
+            again = input("Ещё расчёт? [Enter — да, q — выход]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print("\nВыход.")
+            return
+        print()
+        if again in {"q", "й", "quit", "exit", "н", "no", "n"}:
+            print("Выход.")
+            return
+
+
 if __name__ == "__main__":
     import sys
 
-    query = " ".join(sys.argv[1:]) or "Сталь 40Х, фреза D16 Sandvik, черновая"
-    print(answer(query)[0])
+    if len(sys.argv) > 1:
+        print(answer(" ".join(sys.argv[1:]))[0])
+    else:
+        interactive()
