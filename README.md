@@ -48,6 +48,7 @@ start_download_models.bat
 | `start_night_indexing.bat` | Ночью: парсит PDF → транскрибирует видео → строит ChromaDB (режим TURBO) |
 | `start_work_chat.bat` | Днём: консольный чат (режим ECO — не грузит систему) |
 | `start_download_models.bat` | Качает модели Ollama на E: |
+| `start_reindex_help.bat` | Пересборка базы после обновления оффлайн-справки |
 
 ### Команды чата
 
