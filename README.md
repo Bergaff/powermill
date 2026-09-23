@@ -111,9 +111,11 @@ powermill-ai/                  <- E:\powermill-ai (код в Git)
 | Источник | Команда | Что даёт |
 |---|---|---|
 | PDF из `data\pdf` | `start_night_indexing.bat` | Robot Setup и пр. |
-| Локальная HTML (PML PARREF) | то же, шаг 2 | Справочник объектов/стратегий PML |
-| **Онлайн help.autodesk.com** | **`start_web_scrape.bat`** | User Guide, макросы, стратегии |
-| Оффлайн-справка Autodesk | [скачать](https://www.autodesk.com/powermill-2026-help-download-enu) → `POWERMILL_HELP_DIR` | Полная копия Help офлайн |
+| **Оффлайн-справка** `C:\ProgramData\Autodesk\PowerMill\2026\Help` | шаг 2 того же батника | User Guide, стратегии, резцы (обычно `l.rus` / `l.enu`) |
+| PML PARREF установки | параллельно с оффлайн-справкой | Справочник объектов/команд PML |
+| Видео из `data\videos` | шаг 3 | Транскрипты уроков |
+
+Онлайн-скраб help.autodesk.com **удалён** (SPA + гео-блок): используй оффлайн-установщик справки (уже стоит у тебя).
 
 ## Требования
 

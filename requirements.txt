@@ -1,12 +1,8 @@
 # PDF парсинг
 PyMuPDF>=1.24.0
 
-# HTML парсинг (локальная справка PowerMill)
+# HTML парсинг (оффлайн-справка PowerMill)
 beautifulsoup4>=4.12.0
-
-# Онлайн-справка help.autodesk.com (curl_cffi — обход 403)
-curl_cffi>=0.9.0
-requests>=2.31.0
 
 # Чанкинг
 langchain>=0.2.16
@@ -16,7 +12,7 @@ langchain-text-splitters>=0.2.4
 # Векторная база
 chromadb>=0.5.5
 
-# Локальные эмбеддинги (~90 МБ, all-MiniLM-L6-v2)
+# Локальные эмбеддинги (мультиязычные, кэш на E:\hf_cache)
 sentence-transformers>=3.0.1
 
 # LLM через Ollama
@@ -35,5 +31,5 @@ python-dotenv>=1.0.1
 psutil>=6.0.0
 
 # Внимание: torch (~2 ГБ) ставится вместе с sentence-transformers.
-# Клонируй репозиторий на диск E — тогда venv и torch окажутся на E:,
-# либо заранее выполни scripts\setup_paths.bat (PIP_CACHE_DIR тоже на E:).
+# Клонируй репозиторий на диск E — тогда venv и torch окажутся на E:
+# (кэш pip тоже на E: — см. scripts\set_heavy_paths.bat).

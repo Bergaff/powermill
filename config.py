@@ -34,14 +34,24 @@ for _d in (PDF_DIR, VIDEO_DIR, MACRO_DIR, FORUM_DIR, CHROMA_DIR, OUTPUT_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
 # === Локальная HTML-справка PowerMill (только чтение, НЕ создаём) ===
-# Обычно: <папка PowerMill>\lib\locale\C  (лежит parameters.html, index.html...)
-# Найди точный путь: scripts\find_help.bat
+# Папки, которые сканирует src.html_parser (существующие — берутся все):
+#  1) POWERMILL_HELP_DIR (если задан) либо оффлайн-справка из ProgramData
+#  2) всегда, если есть: PML PARREF/PARSUM у установки PowerMill
 HELP_DIR = Path(
     os.getenv(
         "POWERMILL_HELP_DIR",
-        "E:/powermill 2026/PowerMill 2026/lib/locale/C",
+        "C:/ProgramData/Autodesk/PowerMill/2026/Help",
     )
 )
+# Дополнительные папки справки через ';'
+HELP_DIR_EXTRA = [
+    Path(p)
+    for p in os.getenv("POWERMILL_HELP_DIR_EXTRA", "").split(";")
+    if p.strip()
+]
+HELP_DIR_DEFAULT_EXTRAS = [
+    Path("E:/powermill 2026/PowerMill 2026/lib/locale/C"),  # PML reference
+]
 
 # === Модели Ollama ===
 # 3B — минимум (уже скачаны). При 12 ГБ VRAM рекомендуется 7B:
@@ -89,18 +99,3 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
 # === Telegram ===
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-
-# === Скраббер онлайн-справки help.autodesk.com ===
-WEB_HELP_BASE = "https://help.autodesk.com/view/PWRM/2026/ENU/"
-WEB_HELP_MAX_PAGES = int(os.getenv("WEB_HELP_MAX_PAGES", "500"))
-WEB_HELP_DELAY = float(os.getenv("WEB_HELP_DELAY", "0.4"))  # сек между запросами
-WEB_HELP_TIMEOUT = int(os.getenv("WEB_HELP_TIMEOUT", "30"))
-# При 403/блокировке брать страницу из Wayback Machine (archive.org)
-WEB_HELP_WAYBACK = os.getenv("WEB_HELP_WAYBACK", "1") not in {"0", "false", "no"}
-# Точки входа: главная + гайд по макросам + MTD + essential skills (резцы/траектории)
-WEB_HELP_SEEDS = [
-    "PWRM-MACROS-MACROS",
-    "PWRM-MTD-INTRODUCTION",
-    "GUID-D10500A6-2DDD-4418-897F-6725AB69B579",   # User Interface and Part Setup
-    "GUID-9E6A4662-8067-4A2E-890B-80716707114D",   # Introduction to Tools and Toolpaths
-]

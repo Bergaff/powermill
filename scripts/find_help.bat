@@ -1,38 +1,38 @@
 @echo off
 chcp 65001 >nul
-title Find PowerMill HTML help on this PC
+title Find PowerMill offline HTML help
 echo =========================================================
-echo   Looking for local PowerMill 2026 HTML documentation...
+echo   Looking for PowerMill 2026 offline documentation...
 echo =========================================================
 
 echo.
-echo [1] Count of HTML files in main install tree (may take a moment):
-dir /s /b "E:\powermill 2026\PowerMill 2026\*.htm" 2>nul > "%TEMP%\pm_html_list.txt"
-dir /s /b "E:\powermill 2026\PowerMill 2026\*.html" 2>nul >> "%TEMP%\pm_html_list.txt"
-for %%F in ("%TEMP%\pm_html_list.txt") do echo       found: %%~zF bytes in list
+echo [1] Offline help (ProgramData):
+dir /b "C:\ProgramData\Autodesk\PowerMill\2026\Help" 2>nul
+echo     --- l.rus ---
+dir /b "C:\ProgramData\Autodesk\PowerMill\2026\Help\l.rus" 2>nul | more +0
+dir /s /b "C:\ProgramData\Autodesk\PowerMill\2026\Help\*.html" 2>nul > "%TEMP%\pm_offline_help.txt"
+dir /s /b "C:\ProgramData\Autodesk\PowerMill\2026\Help\*.htm" 2>nul >> "%TEMP%\pm_offline_help.txt"
+for %%F in ("%TEMP%\pm_offline_help.txt") do echo       HTML files list: %%~zF bytes
 
 echo.
-echo [2] Top-level folders of the install:
-dir /b /ad "E:\powermill 2026\PowerMill 2026" 2>nul
-
-echo.
-echo [3] lib\locale contents (docs usually live here):
-dir /b /ad "E:\powermill 2026\PowerMill 2026\lib\locale" 2>nul
+echo [2] PML reference in install tree:
 dir /b /ad "E:\powermill 2026\PowerMill 2026\lib\locale\C" 2>nul
 
 echo.
-echo [4] Known doc entry points:
-dir /b "E:\powermill 2026\PowerMill 2026\lib\locale\C\PARSUM" 2>nul
-dir /b "E:\powermill 2026\PowerMill 2026\lib\locale\C\PARREF" 2>nul
-
-echo.
-echo [5] First 30 HTML paths found (full list in %TEMP%\pm_html_list.txt):
-powershell -Command "Get-Content -Head 30 '%TEMP%\pm_html_list.txt'" 2>nul
+echo [3] First 30 offline help paths:
+powershell -Command "Get-Content -Head 30 '%TEMP%\pm_offline_help.txt'" 2>nul
 
 echo.
 echo =========================================================
-echo   Next: set POWERMILL_HELP_DIR to the folder that
-echo   CONTAINS the docs (the one with index.html / parameters.html)
-echo   and run:  python -m src.html_parser
+echo   Defaults used by the project:
+echo     C:\ProgramData\Autodesk\PowerMill\2026\Help
+echo     E:\powermill 2026\PowerMill 2026\lib\locale\C
+echo.
+echo   Override if needed:
+echo     set POWERMILL_HELP_DIR=C:\your\path
+echo.
+echo   Then parse and index:
+echo     python -m src.html_parser
+echo     python -m src.vectorstore
 echo =========================================================
 pause

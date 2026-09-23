@@ -44,19 +44,12 @@ def chunk_all_parsed_docs() -> list[dict]:
         all_chunks.extend(chunks)
         print(f"📄 PDF-документация: {len(chunks)} чанков")
 
-    # 1b. Локальная HTML-справка PowerMill (стратегии, резцы, PML...)
+    # 1b. Локальная HTML-справка PowerMill (оффлайн Help + PML PARREF)
     html_file = OUTPUT_DIR / "parsed_html.txt"
     if html_file.exists():
         chunks = chunk_text(html_file.read_text(encoding="utf-8"), source="powermill_help")
         all_chunks.extend(chunks)
         print(f"📘 HTML-справка: {len(chunks)} чанков")
-
-    # 1c. Онлайн-справка help.autodesk.com (User Guide, макросы, стратегии)
-    web_file = OUTPUT_DIR / "parsed_web.txt"
-    if web_file.exists():
-        chunks = chunk_text(web_file.read_text(encoding="utf-8"), source="powermill_web")
-        all_chunks.extend(chunks)
-        print(f"🌐 Онлайн-справка: {len(chunks)} чанков")
 
     # 2. Транскрипции видео
     for txt_file in sorted(OUTPUT_DIR.glob("*_transcript.txt")):
