@@ -95,6 +95,8 @@ WEB_HELP_BASE = "https://help.autodesk.com/view/PWRM/2026/ENU/"
 WEB_HELP_MAX_PAGES = int(os.getenv("WEB_HELP_MAX_PAGES", "500"))
 WEB_HELP_DELAY = float(os.getenv("WEB_HELP_DELAY", "0.4"))  # сек между запросами
 WEB_HELP_TIMEOUT = int(os.getenv("WEB_HELP_TIMEOUT", "30"))
+# При 403/блокировке брать страницу из Wayback Machine (archive.org)
+WEB_HELP_WAYBACK = os.getenv("WEB_HELP_WAYBACK", "1") not in {"0", "false", "no"}
 # Точки входа: главная + гайд по макросам + MTD + essential skills (резцы/траектории)
 WEB_HELP_SEEDS = [
     "PWRM-MACROS-MACROS",

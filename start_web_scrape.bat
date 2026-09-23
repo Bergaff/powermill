@@ -5,13 +5,10 @@ cd /d "%~dp0"
 call venv\Scripts\activate
 
 echo =========================================================
-echo   Downloading PowerMill 2026 online help articles
-echo   from help.autodesk.com into knowledge base.
-echo.
-echo   * curl_cffi impersonates Chrome TLS - bypasses HTTP 403
-echo   * ~500 pages, pause between requests
-echo   * Progress saved - Ctrl+C and run again to resume
-echo   * Result: E:\powermill-ai\output\parsed_web.txt
+echo   Downloading PowerMill help articles into knowledge base.
+echo   * direct fetch with Chrome TLS (curl_cffi)
+echo   * on HTTP 403: automatic Wayback Machine fallback
+echo   * result: E:\powermill-ai\output\parsed_web.txt
 echo =========================================================
 echo.
 
@@ -38,13 +35,12 @@ exit /b 0
 :fail
 echo.
 echo =========================================================
-echo   Scraping produced no articles.
-echo   1. Check messages above (403 or empty SPA)
-echo   2. Try: del output\web_scrape_state.json  and run again
-echo   3. Or install OFFLINE help:
-echo      https://www.autodesk.com/powermill-2026-help-download-enu
-echo      then: scripts\find_help.bat  +  set POWERMILL_HELP_DIR=...
-echo      then: start_night_indexing.bat
+echo   No articles downloaded.
+echo   OFFLINE HELP (most reliable):
+echo     https://www.autodesk.com/powermill-2026-help-download-enu
+echo     scripts\find_help.bat
+echo     set POWERMILL_HELP_DIR=E:\path\to\offline\help
+echo     start_night_indexing.bat
 echo =========================================================
 pause
 exit /b 1
