@@ -30,8 +30,8 @@ if errorlevel 1 (
 echo.
 echo =========================================================
 echo   DONE. Start chat:  start_work_chat.bat
-echo   Test:
-echo     /sources какой резец выбрать
+echo   Test inside chat:
+echo     /sources tool selection
 echo     /sources Offset Area Clearance
 echo =========================================================
 pause
