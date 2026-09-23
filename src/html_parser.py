@@ -145,7 +145,13 @@ def parse_all_help() -> list[dict]:
         try:
             title, text = html_to_text(path)
             rel = path.relative_to(root)
-            top = rel.parts[0] if len(rel.parts) > 1 else "(root)"
+            # группировка: первые 2 компонента пути (Help\l.rus\contexthelp\...)
+            if len(rel.parts) >= 3:
+                top = "\\".join(rel.parts[:3])
+            elif len(rel.parts) == 2:
+                top = "\\".join(rel.parts)
+            else:
+                top = rel.parts[0]
             st = stats.setdefault(str(root.name), {})
             cell = st.setdefault(top, [0, 0, 0])
             cell[0] += 1
