@@ -1,38 +1,24 @@
 @echo off
 chcp 65001 >nul
 title Find PowerMill offline HTML help
+cd /d "%~dp0\.."
+
 echo =========================================================
-echo   Looking for PowerMill 2026 offline documentation...
+echo   Ищу оффлайн-справку PowerMill и показываю её структуру
 echo =========================================================
-
 echo.
-echo [1] Offline help (ProgramData):
-dir /b "C:\ProgramData\Autodesk\PowerMill\2026\Help" 2>nul
-echo     --- l.rus ---
-dir /b "C:\ProgramData\Autodesk\PowerMill\2026\Help\l.rus" 2>nul | more +0
-dir /s /b "C:\ProgramData\Autodesk\PowerMill\2026\Help\*.html" 2>nul > "%TEMP%\pm_offline_help.txt"
-dir /s /b "C:\ProgramData\Autodesk\PowerMill\2026\Help\*.htm" 2>nul >> "%TEMP%\pm_offline_help.txt"
-for %%F in ("%TEMP%\pm_offline_help.txt") do echo       HTML files list: %%~zF bytes
 
-echo.
-echo [2] PML reference in install tree:
-dir /b /ad "E:\powermill 2026\PowerMill 2026\lib\locale\C" 2>nul
+if exist "venv\Scripts\python.exe" (
+    call venv\Scripts\activate
+) else (
+    echo [!] venv не найден - работаю системным Python
+)
 
-echo.
-echo [3] First 30 offline help paths:
-powershell -Command "Get-Content -Head 30 '%TEMP%\pm_offline_help.txt'" 2>nul
-
+python -m scripts.dump_help_samples
 echo.
 echo =========================================================
-echo   Defaults used by the project:
-echo     C:\ProgramData\Autodesk\PowerMill\2026\Help
-echo     E:\powermill 2026\PowerMill 2026\lib\locale\C
-echo.
-echo   Override if needed:
-echo     set POWERMILL_HELP_DIR=C:\your\path
-echo.
-echo   Then parse and index:
-echo     python -m src.html_parser
-echo     python -m src.vectorstore
+echo   Если справка не найдена, укажи путь руками:
+echo     setx POWERMILL_HELP_DIR "C:\ProgramData\Autodesk\PowerMill\2026\Help"
+echo     (после setx открой НОВОЕ окно cmd)
 echo =========================================================
 pause

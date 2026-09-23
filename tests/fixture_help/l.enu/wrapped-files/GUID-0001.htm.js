@@ -1,0 +1,1 @@
+document.write("<div><h1>Curve finishing</h1><p>English duplicate that must be ignored.</p></div>");

@@ -29,9 +29,19 @@ MACRO_DIR = DATA_DIR / "macros"
 FORUM_DIR = DATA_DIR / "forums"
 CHROMA_DIR = DATA_ROOT / "chroma_db"
 OUTPUT_DIR = DATA_ROOT / "output"
+# Индекс keyword-поиска по справке (SQLite FTS5, встроен в Python)
+HELP_SEARCH_DB = Path(os.getenv("POWERMILL_HELP_SEARCH_DB", str(DATA_ROOT / "help_search.db")))
 
+_IS_WINDOWS = os.sys.platform == "win32"
 for _d in (PDF_DIR, VIDEO_DIR, MACRO_DIR, FORUM_DIR, CHROMA_DIR, OUTPUT_DIR):
-    _d.mkdir(parents=True, exist_ok=True)
+    # На Linux/macOS без POWERMILL_DATA_ROOT не создаём каталог «E:/...»
+    # (это путь диска E: на Windows; в Unix он превратился бы в мусорную папку).
+    if not _IS_WINDOWS and "POWERMILL_DATA_ROOT" not in os.environ:
+        continue
+    try:
+        _d.mkdir(parents=True, exist_ok=True)
+    except OSError as _e:  # например, диска E: нет
+        print(f"⚠ Не удалось создать папку {_d}: {_e}")
 
 # === Локальная HTML-справка PowerMill (только чтение, НЕ создаём) ===
 # Папки, которые сканирует src.html_parser (существующие — берутся все):
@@ -52,6 +62,23 @@ HELP_DIR_EXTRA = [
 HELP_DIR_DEFAULT_EXTRAS = [
     Path("E:/powermill 2026/PowerMill 2026/lib/locale/C"),  # PML reference
 ]
+
+# === Язык справки ===
+# Внутри Help лежат языковые папки: l.rus (русская), l.enu (английская), l.deu ...
+# Берём ТОЛЬКО один язык, иначе база забьётся дублями RU+EN.
+# Значение "rus" = искать l.rus, "enu" = l.enu, "auto" = первый найденный.
+HELP_LANG = os.getenv("POWERMILL_HELP_LANG", "rus").strip().lower()
+HELP_LANG_PRIORITY = ["rus", "enu"]  # порядок, если HELP_LANG == "auto"
+
+# 0 = парсить всё (нужно для полной базы). >0 — только N файлов (для быстрой проверки).
+HELP_FILE_LIMIT = int(os.getenv("POWERMILL_HELP_FILE_LIMIT", "0"))
+
+# Файлы help-страниц (одна страница = один .htm) и «обёрнутые» JS-файлы,
+# в которых MadCap/WebWorks кладёт настоящий HTML.
+#   l.rus/files/*.htm        <- оглавление-заглушки (~0.8 КБ)
+#   l.rus/wrapped-files/*.js <- реальный текст страницы (до 50 КБ)
+HELP_WRAPPED_DIR = "wrapped-files"
+HELP_FILES_DIR = "files"
 
 # === Модели Ollama ===
 # 3B — минимум (уже скачаны). При 12 ГБ VRAM рекомендуется 7B:
