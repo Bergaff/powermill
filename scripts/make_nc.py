@@ -185,6 +185,11 @@ def main() -> int:
     print()
 
     steps_result, note = pm_nc.last_result()
+    project_folder = pm_nc.project_path(steps_result)
+    written = pm_nc.find_written_file(project_folder, before)
+    if written is None and plan.filename is not None and Path(plan.filename).exists():
+        written = Path(plan.filename)
+
     body = ["NC-программа (шаг 3.5, пункт 36)", "",
             pm_nc.format_result(steps_result), ""]
     if not got:
@@ -200,10 +205,33 @@ def main() -> int:
 
     print(pm_nc.format_result(steps_result))
     print()
+    info = pm_nc.written_file_info(written)
+    wrote_line = any(step == "write" and status == "ok"
+                     for step, status, _detail in steps_result)
+    if info is not None:
+        file, size = info
+        print(f"  ✔ Файл на диске: {file} ({size} байт)")
+        body.append(f"Файл на диске: {file} ({size} байт)")
+        if not wrote_line:
+            note_file = ("Файл на диске есть, а строку «выведен» макрос не дописал: "
+                         "скорее всего PowerMill спрашивал подтверждение — вывод при "
+                         "этом прошёл. Файл проверь глазами.")
+            print(f"  • {note_file}")
+            body.append(note_file)
+    else:
+        where = plan.filename or (project_folder / "ncprograms" if project_folder
+                                 else "папка ncprograms проекта")
+        print(f"  (!) Файла NC на диске не видно: {where}")
+        print("      Проверь путь и постпроцессор (или выведи файл в PowerMill вручную:")
+        print("      NC-программа -> правая кнопка -> Вывод).")
+        body.append(f"(!) Файла NC на диске не видно: {where} — проверь путь и "
+                    "постпроцессор")
+    body.append("")
+    print()
     print("\n".join(pm_nc.not_checked_lines(plan)))
     print()
     if plan.filename is not None:
-        print(f"  Файл NC: {plan.filename}")
+        print(f"  Ожидаемый файл NC: {plan.filename}")
     else:
         print("  Файл NC: в папке проекта ncprograms (имя — как у программы)")
     print(f"  Отчёт: {REPORT_FILE} (открывается пунктом 29 меню)")

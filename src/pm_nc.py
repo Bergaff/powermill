@@ -75,6 +75,16 @@ def build_macro(plan: NcPlan, known_programs: list[str] | None = None) -> str:
     `known_programs` — программы, которые уже есть в проекте (их имена читает
     пункт 36 через COM). Если имя совпадает и перезапись не разрешена, макрос
     ничего не делает и честно об этом пишет.
+
+    Две вещи, которые легко испортить, и которые здесь учтены:
+
+    * **объявления только на верхнем уровне** — внутри IF/ELSE PowerMill
+      допускает лишь присваивание (иначе «local variable is already defined»);
+    * **вывод файла** (`ACTIVATE NCPROGRAM … KEEP NCPROGRAM ;`) может спросить
+      подтверждение — тогда макрос отвечает `YES`, как это сделано в рабочих
+      макросах Autodesk. Строку «файл выведен» макрос пишет уже ПОСЛЕ вывода,
+      поэтому её наличие — доказательство, что вывод прошёл; нет строки — значит
+      не прошёл, и это будет видно в отчёте.
     """
     known = [name for name in (known_programs or []) if name]
     out = str(plan.result_file).replace("\\", "/")
@@ -91,22 +101,41 @@ def build_macro(plan: NcPlan, known_programs: list[str] | None = None) -> str:
         "",
         "RESET LOCALVARS",
         "",
+        "// Объявления — заранее, до IF: внутри блоков PowerMill разрешает только",
+        "// присваивание.",
         f"STRING $pm_res = '{out}'",
         'STRING $pm_tag = "PM_NC_RESULT"',
+        f'STRING $pm_head = "PowerMill AI: вывод NC-программы {plan.name}"',
+        'STRING $pm_fin = "Вывод NC закончен: " + $pm_res',
+        'STRING $pm_prj = ""',
+        'STRING $pm_prjline = ""',
+        'STRING $pm_dup = ""',
+        'STRING $pm_created = ""',
+        'STRING $pm_add = ""',
+        'STRING $pm_file = ""',
+        'STRING $pm_post = ""',
+        'STRING $pm_num = ""',
+        'STRING $pm_keep = ""',
+        'STRING $pm_out = ""',
+        'STRING $pm_ok = "no"',
+        "",
         "FILE OPEN $pm_res FOR WRITE AS ncout",
         "FILE WRITE $pm_tag TO ncout",
-        "",
-        f'STRING $pm_head = "PowerMill AI: вывод NC-программы {plan.name}"',
-        "PRINT $pm_head",
         "FILE WRITE $pm_head TO ncout",
+        "",
+        "// папка проекта — по ней сценарий проверит, появился ли файл NC на диске",
+        "$pm_prj = project_pathname(0)",
+        f'$pm_prjline = "{STEP_MARK}project;info;" + $pm_prj',
+        "FILE WRITE $pm_prjline TO ncout",
         "",
     ]
 
-    # проверка: нет ли такой программы в проекте
+    # программа с таким именем уже есть — по умолчанию не перезаписываем
     if known and not plan.overwrite:
         lines += [
             f"IF ENTITY_EXISTS('ncprogram', '{safe_name}') {{",
-            f'    STRING $pm_dup = "{STEP_MARK}exists;fail;программа «{plan.name}» уже есть в проекте — включи перезапись (overwrite), если нужно заменить"',
+            f'    $pm_dup = "{STEP_MARK}exists;fail;программа «{plan.name}» уже есть в '
+            'проекте — включи перезапись (overwrite), если нужно заменить"',
             "    FILE WRITE $pm_dup TO ncout",
             "} ELSE {",
         ]
@@ -115,14 +144,16 @@ def build_macro(plan: NcPlan, known_programs: list[str] | None = None) -> str:
         inner = ""
 
     if plan.overwrite:
-        lines.append(f"{inner}// перезапись разрешена: старую программу с таким именем удаляем")
-        lines.append(f"{inner}IF ENTITY_EXISTS('ncprogram', '{safe_name}') {{")
-        lines.append(f"{inner}    DELETE NCPROGRAM '{safe_name}'")
-        lines.append(f"{inner}}}")
+        lines += [
+            f"{inner}// перезапись разрешена: старую программу с таким именем удаляем",
+            f"{inner}IF ENTITY_EXISTS('ncprogram', '{safe_name}') {{",
+            f"{inner}    DELETE NCPROGRAM '{safe_name}'",
+            f"{inner}}}",
+        ]
 
     lines += [
         f"{inner}CREATE NCPROGRAM '{safe_name}'",
-        f'{inner}STRING $pm_created = "{STEP_MARK}create;ok;{plan.name}: программа создана"',
+        f'{inner}$pm_created = "{STEP_MARK}create;ok;{plan.name}: программа создана"',
         f"{inner}FILE WRITE $pm_created TO ncout",
         f"{inner}ACTIVATE NCPROGRAM '{safe_name}'",
     ]
@@ -133,9 +164,9 @@ def build_macro(plan: NcPlan, known_programs: list[str] | None = None) -> str:
             f"    // траектория: {toolpath}",
             f"    IF ENTITY_EXISTS('toolpath', '{safe_tp}') {{",
             f"        EDIT NCPROGRAM ; APPEND TOOLPATH '{safe_tp}'",
-            f'        STRING $pm_add = "{STEP_MARK}append;ok;{toolpath}"',
+            f'        $pm_add = "{STEP_MARK}append;ok;{toolpath}"',
             "    } ELSE {",
-            f'        STRING $pm_add = "{STEP_MARK}append;fail;{toolpath}: такой траектории в проекте нет"',
+            f'        $pm_add = "{STEP_MARK}append;fail;{toolpath}: такой траектории в проекте нет"',
             "    }",
             "    FILE WRITE $pm_add TO ncout",
         ]
@@ -143,9 +174,9 @@ def build_macro(plan: NcPlan, known_programs: list[str] | None = None) -> str:
     if plan.filename is not None:
         target = str(plan.filename).replace("\\", "/")
         lines += [
-            f"    // путь выходного файла",
+            "    // путь выходного файла",
             f"    EDIT NCPROGRAM '{safe_name}' FILENAME '{target}'",
-            f'    STRING $pm_file = "{STEP_MARK}filename;ok;{target}"',
+            f'    $pm_file = "{STEP_MARK}filename;ok;{target}"',
             "    FILE WRITE $pm_file TO ncout",
         ]
 
@@ -154,33 +185,43 @@ def build_macro(plan: NcPlan, known_programs: list[str] | None = None) -> str:
         lines += [
             "    // постпроцессор (файл .pmoptz)",
             f"    EDIT NCPROGRAM '{safe_name}' TAPEOPTIONS '{post}'",
-            f'    STRING $pm_post = "{STEP_MARK}postprocessor;ok;{post}"',
+            f'    $pm_post = "{STEP_MARK}postprocessor;ok;{post}"',
             "    FILE WRITE $pm_post TO ncout",
         ]
 
     lines += [
         f"    EDIT NCPROGRAM '{safe_name}' NUMBER {int(plan.number)}",
-        f'    STRING $pm_num = "{STEP_MARK}number;ok;{int(plan.number)}"',
+        f'    $pm_num = "{STEP_MARK}number;ok;{int(plan.number)}"',
         "    FILE WRITE $pm_num TO ncout",
         "    DEACTIVATE NCPROGRAM",
         "",
         "    // ---- вывод файла: KEEP NCPROGRAM = записать NC ----",
-        f"    ACTIVATE NCPROGRAM '{safe_name}' KEEP NCPROGRAM ;",
-        f'    STRING $pm_out = "{STEP_MARK}write;ok;файл NC записан (смотри папку ncprograms проекта)"',
-        "    FILE WRITE $pm_out TO ncout",
-        "    DEACTIVATE NCPROGRAM",
+        f'    $pm_keep = "{STEP_MARK}keep;info;вывожу файл: KEEP NCPROGRAM"',
+        "    FILE WRITE $pm_keep TO ncout",
+        '    $pm_ok = "yes"',
     ]
 
     if known and not plan.overwrite:
         lines.append("}")
 
+    # отчёт закрываем ДО вывода файла: если PowerMill задумается, отчёт уже целый
     lines += [
         "",
-        'STRING $pm_done = "Вывод NC закончен. Отчёт: " + $pm_res',
-        "FILE WRITE $pm_done TO ncout",
         "FILE CLOSE ncout",
-        "PRINT $pm_done",
-        "MESSAGE INFO $pm_done",
+        "",
+        'IF $pm_ok == "yes" {',
+        "    // Вывод файла. Если PowerMill спросит подтверждение — ответит строка YES",
+        "    // (так сделано в рабочих макросах Autodesk: ACTIVATE … KEEP NCPROGRAM ; YES).",
+        f"    ACTIVATE NCPROGRAM '{safe_name}' KEEP NCPROGRAM ;",
+        "    YES",
+        "    // строку о выводе пишем ПОСЛЕ вывода — она и есть доказательство",
+        "    FILE OPEN $pm_res FOR APPEND AS nc_after",
+        f'    $pm_out = "{STEP_MARK}write;ok;файл NC выведен"',
+        "    FILE WRITE $pm_out TO nc_after",
+        "    FILE CLOSE nc_after",
+        "}",
+        "PRINT $pm_fin",
+        "MESSAGE INFO $pm_fin",
     ]
     return "\n".join(lines) + "\n"
 
@@ -213,6 +254,7 @@ def parse_result(text: str) -> list[tuple[str, str, str]]:
 
 
 STEP_TITLES = {
+    "project": "Папка проекта",
     "exists": "Проверка имени программы",
     "create": "Создание NC-программы",
     "append": "Траектории в программе",
@@ -264,6 +306,58 @@ def last_result(path: Path | str = RESULT_FILE) -> tuple[list[tuple[str, str, st
         when = time.strftime("%d.%m %H:%M", time.localtime(file.stat().st_mtime))
         return steps, f"отчёт от {when} — если проект другой, запусти заново"
     return steps, ""
+
+
+def project_path(steps: list[tuple[str, str, str]]) -> Path | None:
+    """Папка проекта из отчёта макроса (`project_pathname(0)`)."""
+    for step, _status, detail in steps:
+        if step == "project" and detail:
+            return Path(detail.strip().replace("\\", "/"))
+    return None
+
+
+NC_SUFFIXES = (".tap", ".nc", ".cnc", ".h", ".mpf", ".txt", ".iso", ".gcode")
+
+
+def find_written_file(folder: Path | None, before: float,
+                      suffixes: tuple[str, ...] = NC_SUFFIXES) -> Path | None:
+    """Ищет файл NC, который PowerMill записал после `before`.
+
+    PowerMill кладёт вывод в папку `ncprograms` проекта (имя — как у программы).
+    Если файла нет — так и скажем, вместо «наверное, вывелось».
+    """
+    if not folder:
+        return None
+    folders = [folder / "ncprograms", folder]
+    newest: Path | None = None
+    for candidate in folders:
+        if not candidate.exists():
+            continue
+        try:
+            files = [path for path in candidate.iterdir()
+                     if path.is_file() and path.suffix.lower() in suffixes
+                     and path.stat().st_mtime >= before - 2]
+        except OSError:
+            continue
+        for path in files:
+            if newest is None or path.stat().st_mtime > newest.stat().st_mtime:
+                newest = path
+    return newest
+
+
+def written_file_info(path: Path | str | None) -> tuple[Path, int] | None:
+    """Файл и его размер — или None, если файла нет/диск недоступен.
+
+    Проверять обязательно: диск E: может быть не подключён, а PowerMill ответил
+    «записал». Обещать файл, которого нет, нельзя.
+    """
+    if not path:
+        return None
+    try:
+        file = Path(path)
+        return file, file.stat().st_size
+    except OSError:
+        return None
 
 
 def default_filename(project_folder: Path | str | None, name: str,
@@ -322,7 +416,8 @@ def preview(plan: NcPlan) -> list[str]:
         lines.append(f"  4. Постпроцессор: {plan.postprocessor}")
     else:
         lines.append("  4. Постпроцессор: как в настройках проекта (не меняю)")
-    lines.append("  5. Вывод файла командой ACTIVATE NCPROGRAM … KEEP NCPROGRAM ;")
+    lines.append("  5. Вывод файла: ACTIVATE NCPROGRAM … KEEP NCPROGRAM ;"
+                 " (если PowerMill спросит подтверждение, макрос ответит «Да»)")
     if plan.overwrite:
         lines.append("  6. Перезапись: одноимённая программа в проекте будет удалена")
     return lines

@@ -161,11 +161,16 @@ def main() -> int:
               "(слово создания определит перебор, как в пункте 33).")
     print()
 
-    request.calculate = ask_yes_no("  Считать траекторию сразу? (да/нет) [да]: ") in (None, True)
-    request.check_after = ask_yes_no("  Проверки после расчёта (зарезы, столкновения)? "
-                                     "(да/нет) [да]: ") in (None, True)
-    request.nc_after = ask_yes_no("  Вывести NC-программу после проверок? "
-                                 "(да/нет) [нет]: ") is True
+    answers = [
+        ask_yes_no("  Считать траекторию сразу? (да/нет) [да]: "),
+        ask_yes_no("  Проверки после расчёта (зарезы, столкновения)? (да/нет) [да]: "),
+        ask_yes_no("  Вывести NC-программу после проверок? (да/нет) [нет]: "),
+    ]
+    if any(answer is None for answer in answers):
+        print("Остановлено до изменений — ничего не менял.")
+        return 0
+    request.calculate, request.check_after, request.nc_after = (
+        answers[0] is not False, answers[1] is not False, answers[2] is True)
     print()
 
     print("  Запускаю поток. Проект изменится — работай на копии.")
@@ -269,8 +274,29 @@ def main() -> int:
             print("  Жду отчёт вывода NC (до 3 минут)…")
             wait_for(pm_nc.RESULT_FILE, before, timeout=180)
             report.nc_steps, _ = pm_nc.last_result()
+            written = pm_nc.find_written_file(pm_nc.project_path(report.nc_steps),
+                                              before)
+            if written is None and Path(nc_plan.filename).exists():
+                written = Path(nc_plan.filename)
             print()
             print(pm_nc.format_result(report.nc_steps))
+            info = pm_nc.written_file_info(written)
+            wrote_line = any(step == "write" and status == "ok"
+                             for step, status, _detail in report.nc_steps)
+            if info is not None:
+                file, size = info
+                print(f"  ✔ Файл на диске: {file} ({size} байт)")
+                report.add("NC: файл на диске", "ok", f"{file} ({size} байт)")
+                if not wrote_line:
+                    report.add("NC: подтверждение вывода", "skip",
+                               "файл на диске есть, строку «выведен» макрос не дописал "
+                               "(PowerMill спрашивал подтверждение)")
+            else:
+                print("  (!) Файла NC на диске не видно — проверь путь и постпроцессор")
+                report.add("NC: файл на диске", "fail",
+                           "файл не найден — проверь путь и постпроцессор")
+                report.warnings.append("NC-файла на диске не видно: проверь путь "
+                                       "вывода и постпроцессор.")
             print("\n".join(pm_nc.not_checked_lines(nc_plan)))
             for step, status, detail in report.nc_steps:
                 report.add(f"NC: {pm_nc.STEP_TITLES.get(step, step)}", status, detail)

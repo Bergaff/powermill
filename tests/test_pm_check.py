@@ -83,6 +83,26 @@ def test_macro_recalcs_only_when_allowed():
     assert "EDIT TOOLPATH" not in pm_check.build_macro(plan(recalc=False))
 
 
+def test_macro_declares_each_variable_once():
+    """Объявления — на верхнем уровне: внутри IF/ELSE только присваивание.
+
+    Иначе PowerMill отвечает «local variable is already defined» — на этом уже
+    спотыкались, поэтому проверяем и повторные объявления, и объявления в блоках.
+    """
+    import re
+
+    code = pm_check.build_macro(plan(toolpaths=["A", "B"]))
+    declared = re.findall(r"\b(?:STRING|ENTITY|INT|BOOL|REAL)\s+(\$[A-Za-z0-9_]+)", code)
+    assert len(declared) == len(set(declared)), declared
+
+    depth = 0
+    for line in code.splitlines():
+        if depth > 0 and line.strip().startswith("STRING $"):
+            # внутри блока допускается объявление только сущности траектории
+            assert "ENTITY $pm_tp_" in line, line
+        depth += line.count("{") - line.count("}")
+
+
 def test_macro_has_unique_file_handles():
     code = pm_check.build_macro(plan(toolpaths=["A", "B"]))
     handles = [line.split()[-1] for line in code.splitlines()

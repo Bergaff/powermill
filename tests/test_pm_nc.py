@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
@@ -69,6 +70,43 @@ def test_macro_overwrites_when_allowed():
     assert "NC;exists;fail;" not in code
 
 
+def test_macro_answers_powermill_question_after_keep():
+    """За `KEEP NCPROGRAM ;` идёт строка YES — ответ на вопрос PowerMill.
+
+    Так сделано в рабочих макросах Autodesk; если файл надо перезаписать, вопрос
+    обязательно появится и без ответа макрос простоит до щелчка мышью.
+    """
+    code = pm_nc.build_macro(plan())
+    lines = [line.strip() for line in code.splitlines()]
+    keep = lines.index("ACTIVATE NCPROGRAM 'PROGRAM1' KEEP NCPROGRAM ;")
+    assert lines[keep + 1] == "YES"
+
+
+def test_macro_writes_output_marker_after_keep():
+    """Строка «файл выведен» идёт после вывода — она и есть доказательство."""
+    code = pm_nc.build_macro(plan())
+    assert code.index("KEEP NCPROGRAM") < code.index("NC;write;ok")
+    assert "FILE OPEN $pm_res FOR APPEND AS nc_after" in code
+
+
+def test_macro_declares_each_variable_once():
+    """Внутри IF/ELSE — только присваивание, иначе «variable is already defined»."""
+    import re
+
+    for known in ([], ["PROGRAM1"]):
+        for overwrite in (False, True):
+            code = pm_nc.build_macro(plan(overwrite=overwrite), known_programs=known)
+            declared = re.findall(r"\b(?:STRING|ENTITY|INT|BOOL|REAL)\s+(\$[A-Za-z0-9_]+)",
+                                  code)
+            assert len(declared) == len(set(declared)), declared
+            # внутри блоков объявлений быть не должно
+            depth = 0
+            for line in code.splitlines():
+                if depth > 0:
+                    assert not line.strip().startswith("STRING $"), line
+                depth += line.count("{") - line.count("}")
+
+
 def test_macro_has_unique_file_handles_and_variables_only():
     code = pm_nc.build_macro(plan())
     handles = [line.split()[-1] for line in code.splitlines()
@@ -102,6 +140,7 @@ def test_preview_shows_paths_and_honesty():
     text = "\n".join(pm_nc.preview(plan(filename=Path("E:/nc/part.tap"))))
     assert "E:/nc/part.tap" in text.replace("\\", "/")
     assert "KEEP NCPROGRAM" in text
+    assert "ответит «Да»" in text
 
 
 # --------------------------------------------------------------------------
@@ -165,6 +204,49 @@ def test_find_postprocessors_scans_given_folder(tmp_path):
     (tmp_path / "не_то.txt").write_text("x", encoding="utf-8")
     found = pm_nc.find_postprocessors(extra_dirs=[tmp_path])
     assert [p.name for p in found] == ["fanuc.pmoptz", "siemens.pmoptz"]
+
+
+def test_macro_reports_project_folder():
+    """Папку проекта макрос пишет сам — по ней ищем файл NC на диске."""
+    code = pm_nc.build_macro(plan())
+    assert "project_pathname(0)" in code
+    assert "NC;project;info;" in code
+
+
+def test_project_path_from_report():
+    steps = pm_nc.parse_result("NC;project;info;E:/projects/Detal\n")
+    assert pm_nc.project_path(steps) == Path("E:/projects/Detal")
+    assert pm_nc.project_path([]) is None
+
+
+def test_find_written_file_in_ncprograms(tmp_path):
+    (tmp_path / "ncprograms").mkdir()
+    before = time.time() - 1
+    assert pm_nc.find_written_file(tmp_path, before) is None
+
+    fresh = tmp_path / "ncprograms" / "PROGRAM1.tap"
+    fresh.write_text("G1 X0\n", encoding="utf-8")
+    (tmp_path / "ncprograms" / "старый.tap").write_text("x", encoding="utf-8")
+    old_time = time.time() - 3600
+    import os
+    os.utime(tmp_path / "ncprograms" / "старый.tap", (old_time, old_time))
+
+    assert pm_nc.find_written_file(tmp_path, before) == fresh
+
+
+def test_find_written_file_without_folder():
+    assert pm_nc.find_written_file(None, time.time()) is None
+    assert pm_nc.find_written_file(Path("/нет/такой/папки"), time.time()) is None
+
+
+def test_written_file_info_is_safe(tmp_path):
+    """Файла нет или диск недоступен — честный None, а не падение."""
+    assert pm_nc.written_file_info(None) is None
+    assert pm_nc.written_file_info(tmp_path / "нет.tap") is None
+    file = tmp_path / "PROGRAM1.tap"
+    file.write_text("G1 X0\n", encoding="utf-8")
+    info = pm_nc.written_file_info(file)
+    assert info is not None and info[1] == len("G1 X0\n")
 
 
 def test_find_postprocessors_missing_folder_is_safe(tmp_path):

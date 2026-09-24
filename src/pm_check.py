@@ -115,14 +115,47 @@ def build_macro(plan: CheckPlan) -> str:
 
     for index, name in enumerate(plan.toolpaths, 1):
         safe_name = name.replace("'", "''")
+        # Объявляем переменные ЗАРАНЕЕ, на верхнем уровне макроса: внутри
+        # IF/ELSE PowerMill разрешает только присваивание (иначе — «local
+        # variable is already defined», на этом уже спотыкались).
+        lines += [
+            f'STRING $pm_missing_{index} = ""',
+            f'STRING $pm_found_{index} = ""',
+            f'STRING $pm_calc_{index} = ""',
+            f'STRING $pm_gouge_{index} = ""',
+            f'STRING $pm_coll_{index} = ""',
+            f'STRING $pm_c_{index} = "no"',
+            f'STRING $pm_cc_{index} = "no"',
+            f'STRING $pm_gc_{index} = "no"',
+            f'STRING $pm_vst_{index} = "skip"',
+            f'STRING $pm_vdet_{index} = ""',
+            f'STRING $pm_verify_{index} = ""',
+            f'STRING $pm_status_{index} = ""',
+            f'STRING $pm_safety_{index} = ""',
+        ]
+        if plan.gouge:
+            lines += [
+                f"STRING $pm_t1_{index} = '{traces[0]}'",
+                f'STRING $pm_mark1_{index} = "шаг 1: проверяю зарезы"',
+            ]
+        if plan.collision:
+            lines += [
+                f"STRING $pm_t2_{index} = '{traces[1]}'",
+                f'STRING $pm_mark2_{index} = "шаг 2: проверяю столкновения"',
+            ]
+        if plan.read_status:
+            lines += [
+                f"STRING $pm_t3_{index} = '{traces[2]}'",
+                f'STRING $pm_mark3_{index} = "шаг 3: читаю статус безопасности"',
+            ]
         lines += [
             f"// ---------- {name} ----------",
             f"IF NOT ENTITY_EXISTS('toolpath', '{safe_name}') {{",
-            f'    STRING $pm_missing_{index} = "{STEP_MARK}exists;fail;{name}: такой траектории в проекте нет"',
+            f'    $pm_missing_{index} = "{STEP_MARK}exists;fail;{name}: такой траектории в проекте нет"',
             f"    FILE WRITE $pm_missing_{index} TO chkout",
             "} ELSE {",
             f"    ENTITY $pm_tp_{index} = entity('toolpath', '{safe_name}')",
-            f'    STRING $pm_found_{index} = "{STEP_MARK}exists;ok;{name}"',
+            f'    $pm_found_{index} = "{STEP_MARK}exists;ok;{name}"',
             f"    FILE WRITE $pm_found_{index} TO chkout",
         ]
 
@@ -131,9 +164,9 @@ def build_macro(plan: CheckPlan) -> str:
                 f"    IF NOT $pm_tp_{index}.Computed {{",
                 f"        ACTIVATE TOOLPATH '{safe_name}'",
                 f"        EDIT TOOLPATH '{safe_name}' CALCULATE",
-                f'        STRING $pm_calc_{index} = "{STEP_MARK}calculate;ok;{name}: траектория досчитана"',
+                f'        $pm_calc_{index} = "{STEP_MARK}calculate;ok;{name}: траектория досчитана"',
                 f"    }} ELSE {{",
-                f'        STRING $pm_calc_{index} = "{STEP_MARK}calculate;skip;{name}: уже посчитана"',
+                f'        $pm_calc_{index} = "{STEP_MARK}calculate;skip;{name}: уже посчитана"',
                 "    }",
                 f"    FILE WRITE $pm_calc_{index} TO chkout",
             ]
@@ -145,25 +178,25 @@ def build_macro(plan: CheckPlan) -> str:
         if plan.gouge:
             lines += [
                 "    // зарезы: отметка, чтобы знать, докуда дошёл макрос",
-                f"    STRING $pm_t1_{index} = '{traces[0]}'",
-                f'    STRING $pm_mark1_{index} = "шаг 1: проверяю зарезы"',
+                f"    $pm_t1_{index} = '{traces[0]}'",
+                f'    $pm_mark1_{index} = "шаг 1: проверяю зарезы"',
                 f"    FILE OPEN $pm_t1_{index} FOR WRITE AS chk_a{index}",
                 f"    FILE WRITE $pm_mark1_{index} TO chk_a{index}",
                 f"    FILE CLOSE chk_a{index}",
                 "    EDIT COLLISION TYPE GOUGE",
                 "    EDIT COLLISION APPLY",
-                f'    STRING $pm_gouge_{index} = "{STEP_MARK}gouge;ok;{name}: зарезы проверены"',
+                f'    $pm_gouge_{index} = "{STEP_MARK}gouge;ok;{name}: зарезы проверены"',
                 f"    FILE WRITE $pm_gouge_{index} TO chkout",
             ]
         else:
             lines.append(
-                f'    STRING $pm_gouge_{index} = "{STEP_MARK}gouge;skip;{name}: проверка зарезов выключена"')
+                f'    $pm_gouge_{index} = "{STEP_MARK}gouge;skip;{name}: проверка зарезов выключена"')
             lines.append(f"    FILE WRITE $pm_gouge_{index} TO chkout")
 
         if plan.collision:
             lines += [
-                f"    STRING $pm_t2_{index} = '{traces[1]}'",
-                f'    STRING $pm_mark2_{index} = "шаг 2: проверяю столкновения"',
+                f"    $pm_t2_{index} = '{traces[1]}'",
+                f'    $pm_mark2_{index} = "шаг 2: проверяю столкновения"',
                 f"    FILE OPEN $pm_t2_{index} FOR WRITE AS chk_b{index}",
                 f"    FILE WRITE $pm_mark2_{index} TO chk_b{index}",
                 f"    FILE CLOSE chk_b{index}",
@@ -174,40 +207,40 @@ def build_macro(plan: CheckPlan) -> str:
                 "    EDIT COLLISION DEPTH Y",
                 "    EDIT COLLISION ADJUST_TOOL Y",
                 "    EDIT COLLISION APPLY",
-                f'    STRING $pm_coll_{index} = "{STEP_MARK}collision;ok;{name}: столкновения проверены"',
+                f'    $pm_coll_{index} = "{STEP_MARK}collision;ok;{name}: столкновения проверены"',
                 f"    FILE WRITE $pm_coll_{index} TO chkout",
             ]
         else:
             lines.append(
-                f'    STRING $pm_coll_{index} = "{STEP_MARK}collision;skip;{name}: проверка столкновений выключена"')
+                f'    $pm_coll_{index} = "{STEP_MARK}collision;skip;{name}: проверка столкновений выключена"')
             lines.append(f"    FILE WRITE $pm_coll_{index} TO chkout")
 
         # статусы: то, что PowerMill записал в свойства траектории
         lines += [
-            f"    STRING $pm_c_{index} = \"no\"",
-            f"    IF $pm_tp_{index}.Computed {{ STRING $pm_c_{index} = \"yes\" }}",
-            f"    STRING $pm_cc_{index} = \"no\"",
-            f"    IF $pm_tp_{index}.Verification.CollisionChecked {{ STRING $pm_cc_{index} = \"yes\" }}",
-            f"    STRING $pm_gc_{index} = \"no\"",
-            f"    IF $pm_tp_{index}.Verification.GougeChecked {{ STRING $pm_gc_{index} = \"yes\" }}",
-            f'    STRING $pm_vdet_{index} = "{name}: столкновения проверены=" + $pm_cc_{index} + ", зарезы проверены=" + $pm_gc_{index} + ", посчитана=" + $pm_c_{index}',
-            f'    STRING $pm_vst_{index} = "skip"',
+            f"    $pm_c_{index} = \"no\"",
+            f"    IF $pm_tp_{index}.Computed {{ $pm_c_{index} = \"yes\" }}",
+            f"    $pm_cc_{index} = \"no\"",
+            f"    IF $pm_tp_{index}.Verification.CollisionChecked {{ $pm_cc_{index} = \"yes\" }}",
+            f"    $pm_gc_{index} = \"no\"",
+            f"    IF $pm_tp_{index}.Verification.GougeChecked {{ $pm_gc_{index} = \"yes\" }}",
+            f'    $pm_vdet_{index} = "{name}: столкновения проверены=" + $pm_cc_{index} + ", зарезы проверены=" + $pm_gc_{index} + ", посчитана=" + $pm_c_{index}',
+            f'    $pm_vst_{index} = "skip"',
             f'    IF $pm_cc_{index} == "yes" {{',
-            f'        IF $pm_gc_{index} == "yes" {{ STRING $pm_vst_{index} = "ok" }}',
+            f'        IF $pm_gc_{index} == "yes" {{ $pm_vst_{index} = "ok" }}',
             "    }",
-            f'    STRING $pm_verify_{index} = "{STEP_MARK}verify;" + $pm_vst_{index} + ";" + $pm_vdet_{index}',
+            f'    $pm_verify_{index} = "{STEP_MARK}verify;" + $pm_vst_{index} + ";" + $pm_vdet_{index}',
             f"    FILE WRITE $pm_verify_{index} TO chkout",
         ]
 
         if plan.read_status:
             lines += [
-                f"    STRING $pm_t3_{index} = '{traces[2]}'",
-                f'    STRING $pm_mark3_{index} = "шаг 3: читаю статус безопасности"',
+                f"    $pm_t3_{index} = '{traces[2]}'",
+                f'    $pm_mark3_{index} = "шаг 3: читаю статус безопасности"',
                 f"    FILE OPEN $pm_t3_{index} FOR WRITE AS chk_c{index}",
                 f"    FILE WRITE $pm_mark3_{index} TO chk_c{index}",
                 f"    FILE CLOSE chk_c{index}",
-                f"    STRING $pm_status_{index} = $pm_tp_{index}.Safety.Tool.Cutting.Status",
-                f'    STRING $pm_safety_{index} = "{STEP_MARK}safety;" + $pm_status_{index} + ";{name}: статус при резании: " + $pm_status_{index}',
+                f"    $pm_status_{index} = $pm_tp_{index}.Safety.Tool.Cutting.Status",
+                f'    $pm_safety_{index} = "{STEP_MARK}safety;" + $pm_status_{index} + ";{name}: статус при резании: " + $pm_status_{index}',
                 f"    FILE WRITE $pm_safety_{index} TO chkout",
             ]
 
