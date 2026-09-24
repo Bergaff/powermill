@@ -234,8 +234,7 @@ def test_macro_saved_header_is_clean_for_good_macro(tmp_path, monkeypatch):
     monkeypatch.setattr(rag.PowerMillAI, "_retrieve", lambda self, q, top_k=None: [])
 
     ai = rag.PowerMillAI(store=object(), load_fts=False, verbose=False)
-    out = ai.macro("припуск по границам")
+    ai.macro("припуск по границам")
     saved = list((tmp_path / "macros").glob("*.mac"))[0].read_text(encoding="utf-8")
     assert "подозрительных строк нет" in saved
     assert "ВНИМАНИЕ" not in saved
-    assert "не найдено" not in out.split("🔎")[-1].lower() or True
