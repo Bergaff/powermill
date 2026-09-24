@@ -20,12 +20,22 @@ from src import power_mill_link         # noqa: E402
 
 
 def install_probe_macro() -> list[Path]:
-    """Кладёт PM_PROBE.mac туда, где PowerMill его видит (список «Макрос»)."""
+    """Пересобирает PM_PROBE.mac под этот компьютер и кладёт его в папки PowerMill.
+
+    Важно: макрос каждый раз создаётся заново. Путь к файлу снимка вписывается
+    внутрь макроса, поэтому старая копия (например, с путём из другой папки или
+    от прежней версии) работать не будет — перезаписываем её своим свежим файлом.
+    """
     from config import OUTPUT_DIR
     from src import pm_macro
     import shutil
 
     source = Path(OUTPUT_DIR) / "PM_PROBE.mac"
+    try:
+        source = power_mill_link.write_probe_macro(OUTPUT_DIR)
+    except OSError as error:
+        print(f"(!) Не удалось создать PM_PROBE.mac: {error}")
+
     copied: list[Path] = []
     if not source.exists():
         return copied
@@ -60,9 +70,15 @@ def main() -> int:
     print()
     print("Важно: макрос САМ записывает снимок проекта в файл")
     print(f"  {OUTPUT_DIR / 'pm_project.txt'}")
+    print("и сразу читает его обратно — в конце он покажет окно, сколько строк")
+    print("записано. Если строк 0 — макрос пришлёт текст ошибки, покажи его в чате.")
     print("Копировать ничего не нужно: после макроса запусти пункт 24 —")
     print("ассистент разберёт этот файл. Ещё быстрее — держи PowerMill открытым:")
     print("тогда пункт 24 читает проект напрямую, вообще без макросов.")
+    print()
+    print("Как запускать макрос: в PowerMill лента «Макрос» -> Выполнить ->")
+    print("PM_PROBE.mac. Если набрать слово MACRO в командной строке, PowerMill")
+    print("сам спросит «Выберите файл >» — это не ошибка нашего макроса.")
     return rc
 
 

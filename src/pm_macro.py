@@ -47,29 +47,42 @@ MODES = (
 
 
 def _win_path(path) -> str:
-    r"""Путь в стиле Windows: разделители — обратные слэши.
+    r"""Путь для .bat и для OLE FILEACTION: разделители — обратные слэши.
 
     Зачем: пути попадают и в PML-макрос, и в .bat. На Windows Path сам даёт
     `\`, но если путь пришёл из настроек с `/` (или мы собираем его в другом
     окружении), получается смесь `E:\powermill-ai\output/pm_test.txt`. cmd её
-    терпит, но PML-строка должна быть обычным windows-путём — поэтому
-    нормализуем.
+    терпит, но .bat-строке нужен обычный windows-путь — поэтому нормализуем.
 
     Обратные слэши НЕ удваиваем: в PML `\` внутри строки — обычный символ, так
     пишут и в принятых решениях на форуме Autodesk:
-    `OLE FILEACTION 'OPEN' 'C:\Program Files\...\Rhino.exe'`,
-    `STRING path_file = "C:\temp\macropaths"`.
+    `OLE FILEACTION 'OPEN' 'C:\Program Files\...\Rhino.exe'`.
     """
     text = str(path)
     looks_windows = (len(text) > 1 and text[1] == ":") or "\\" in text
     return text.replace("/", "\\") if looks_windows else text
 
 
+def pml_path(path) -> str:
+    """Путь для команд FM PmL (FILE OPEN / FILE READ): прямые слэши.
+
+    Отличие от `_win_path` не косметическое. В окне сообщений живого
+    PowerMill 2026 макрос с путём `E:\\powermill-ai\\...` в `FILE OPEN` вместо
+    открытия файла показал приглашение «Выберите файл >» — то есть путь не
+    разобрался. PowerMill сам отдаёт пути через `/` (`project_pathname(0)`), и
+    рабочие макросы с форума открывают файлы так же:
+    `FILE OPEN "S:/Templates/tool.pmlent" FOR WRITE AS output`.
+    Windows понимает оба разделителя, поэтому для макросов берём `/`, а для
+    .bat оставляем `_win_path`.
+    """
+    return str(path).replace("\\", "/")
+
+
 def ask_macro() -> str:
     """Макрос-пульт: спросить ассистента, не выходя из PowerMill."""
     modes_list = ", ".join(f'"{title}"' for _code, title in MODES)
-    request = _win_path(REQUEST_FILE)
-    answer = _win_path(ANSWER_FILE)
+    request = pml_path(REQUEST_FILE)
+    answer = pml_path(ANSWER_FILE)
     launcher = _win_path(OUTPUT_DIR / "pm_answer.bat")
 
     return f"""// ============================================================
@@ -77,6 +90,10 @@ def ask_macro() -> str:
 //  Запуск: вкладка «Макрос» -> Выполнить -> этот файл
 //  (или повесь на кнопку: см. пункт 28 меню)
 // ============================================================
+
+// Переменные в PowerMill живут до конца сессии — сбрасываем перед работой,
+// иначе второй запуск макроса падает на «local variable is already defined».
+RESET LOCALVARS
 
 // 1. Спрашиваем, что нужно технологу
 STRING LIST $modes = {{{modes_list}}}
@@ -119,7 +136,7 @@ MESSAGE INFO $text
 
 def snapshot_macro() -> str:
     """Макрос-снимок: собрать данные проекта в файл и отдать ассистенту."""
-    project = _win_path(PROJECT_FILE)
+    project = pml_path(PROJECT_FILE)
     launcher = _win_path(OUTPUT_DIR / "pm_snapshot.bat")
 
     return f"""// ============================================================
@@ -128,7 +145,11 @@ def snapshot_macro() -> str:
 //  Запуск: вкладка «Макрос» -> Выполнить -> этот файл
 // ============================================================
 
+RESET LOCALVARS
+
 STRING $outfile = '{project}'
+STRING $pm_head = "Файл снимка: " + $outfile
+PRINT $pm_head
 FILE OPEN $outfile FOR WRITE AS out
 
 FILE WRITE "MODELS:" TO out
@@ -173,7 +194,23 @@ FOREACH $item IN FOLDER("Pattern") {{
 
 FILE CLOSE out
 
-PRINT "Снимок проекта сохранён: " + $outfile
+// Проверка: читаем файл обратно — доказательство, что снимок записан
+// (в первых версиях макрос печатал текст, а файл не появлялся).
+STRING LIST $pm_check_lines = {{}}
+FILE OPEN $outfile FOR READ AS chk
+FILE READ $pm_check_lines FROM chk
+FILE CLOSE chk
+INT $pm_count = SIZE($pm_check_lines)
+STRING $pm_count_msg = "Строк в файле снимка: " + STRING($pm_count)
+PRINT $pm_count_msg
+
+IF $pm_count == 0 {{
+    STRING $pm_bad = "Снимок НЕ записался (0 строк). Файл: " + $outfile
+    $pm_bad = $pm_bad + crlf + "Пришли этот текст в чат — разберёмся."
+    MESSAGE WARN $pm_bad
+}}
+
+// Отдаём снимок ассистенту: батник разберёт файл и обновит контекст проекта
 OLE FILEACTION 'OPEN' '{launcher}'
 """
 
@@ -186,7 +223,7 @@ def test_macro() -> str:
     макрос читает файл и сравнивает. Если текст не изменился — программа не
     запустилась. Никаких проверок существования файла, которых нет в PML.
     """
-    test_file = _win_path(TEST_FILE)
+    test_file = pml_path(TEST_FILE)
     launcher = _win_path(OUTPUT_DIR / "pm_test.bat")
 
     return f"""// ============================================================
@@ -194,12 +231,15 @@ def test_macro() -> str:
 //  Проверяет: запись файла, чтение файла, запуск программы, пауза.
 // ============================================================
 
+RESET LOCALVARS
+
 // --- 1. Пишем файл из PowerMill ---
 STRING $f = '{test_file}'
 FILE OPEN $f FOR WRITE AS out
 FILE WRITE "WAIT" TO out
 FILE CLOSE out
-PRINT "[1/4] Файл записан из PowerMill: " + $f
+STRING $m1 = "[1/4] Файл записан из PowerMill: " + $f
+PRINT $m1
 
 // --- 2. Читаем его обратно ---
 STRING LIST $lines = {{}}
@@ -210,7 +250,8 @@ STRING $text = ""
 FOREACH $l IN $lines {{
     $text = $text + $l
 }}
-PRINT "[2/4] Файл прочитан обратно, содержимое: " + $text
+STRING $m2 = "[2/4] Файл прочитан обратно, содержимое: " + $text
+PRINT $m2
 
 // --- 3. Запускаем внешнюю программу (наш .bat) ---
 STRING $launcher = '{launcher}'
@@ -229,12 +270,14 @@ FOREACH $l IN $after {{
     $after_text = $after_text + $l
 }}
 
-PRINT "[3/4] Содержимое после запуска программы: " + $after_text
+STRING $m3 = "[3/4] Содержимое после запуска программы: " + $after_text
+PRINT $m3
 
 IF $after_text == $text {{
     MESSAGE WARN "МОСТ РАБОТАЕТ ЧАСТИЧНО: PowerMill пишет и читает файлы, но внешняя программа не запустилась или не перезаписала файл. Проверь, что pm_test.bat открывается двойным кликом."
     PRINT "[4/4] Запуск внешней программы: НЕ РАБОТАЕТ"
-    PRINT "Файл-запускатель: " + $launcher
+    STRING $m5 = "Файл-запускатель: " + $launcher
+    PRINT $m5
 }} ELSE {{
     MESSAGE INFO "МОСТ РАБОТАЕТ ПОЛНОСТЬЮ: PowerMill записал файл, прочитал его, запустил внешнюю программу, и она ответила. Теперь можно запускать PM_AI_ASK.mac — ассистент внутри PowerMill."
     PRINT "[4/4] Запуск внешней программы: РАБОТАЕТ"

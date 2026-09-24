@@ -107,12 +107,14 @@ def test_launchers_include_test_bat(tmp_path, monkeypatch):
     assert "POWERMILL-AI-OK" in launchers["pm_test.bat"]
 
 
-def test_windows_paths_are_not_doubled(monkeypatch):
-    """Пути на Windows попадают в макрос как E:\powermill-ai\output.
+def test_file_open_paths_use_forward_slashes(monkeypatch):
+    """В FILE OPEN путь идёт с ПРЯМЫМИ слэшами — как у самой PowerMill.
 
-    Удвоение слэшей (E:\\powermill-ai) — ошибка: в PML обратный слэш не
-    экранирует, это видно по принятым решениям Autodesk
-    ('C:\Program Files\...\Rhino.exe', "C:\temp\macropaths").
+    Почему: на живом PowerMill 2026 макрос с путём `E:\\powermill-ai\\...`
+    вместо открытия файла показал приглашение «Выберите файл >». PowerMill сам
+    отдаёт пути через `/` (`project_pathname(0)`), и рабочие макросы с форума
+    открывают файлы так же: `FILE OPEN "S:/Templates/tool.pmlent" FOR WRITE AS output`.
+    Windows понимает оба разделителя, поэтому в макросе — `/`.
     """
     win = r"E:\powermill-ai\output"
     monkeypatch.setattr(pm_macro, "OUTPUT_DIR", Path(win))
@@ -123,14 +125,59 @@ def test_windows_paths_are_not_doubled(monkeypatch):
 
     for code in (pm_macro.ask_macro(), pm_macro.snapshot_macro(),
                  pm_macro.test_macro()):
-        assert "\\\\" not in code, "в макросе удвоенные обратные слэши"
-        assert "E:" in code
+        assert chr(92) * 2 not in code, "в макросе удвоенные обратные слэши"
+        assert "E:/powermill-ai/output" in code
+        for line in code.splitlines():
+            if "FILE OPEN" in line:
+                assert chr(92) not in line, f"обратный слэш в FILE OPEN: {line}"
+
+
+def test_macros_reset_localvars_first():
+    """Без RESET LOCALVARS второй запуск макроса падает.
+
+    На форуме Autodesk: «local variable is already define» при повторном
+    запуске макроса; в рабочих макросах первой строкой стоит `reset localvars`.
+    """
+    for code in (pm_macro.ask_macro(), pm_macro.snapshot_macro(),
+                 pm_macro.test_macro()):
+        head = code.splitlines()[:15]
+        assert "RESET LOCALVARS" in head, code.splitlines()[:3]
+
+
+def test_print_and_message_get_one_value():
+    """В PRINT/MESSAGE передаём одно значение: склейка — только в $переменных.
+
+    Так пишут в рабочих макросах с форума Autodesk: сначала
+    `$Ligne = $tp.name + ";" + $tp.Number`, потом `FILE WRITE $Ligne TO out`.
+    Что команда принимает выражение с `+`, мы на живом PowerMill не проверяли —
+    поэтому не рискуем: собираем текст в переменную и печатаем её.
+    """
+    from src import power_mill_link
+
+    texts = (pm_macro.ask_macro(), pm_macro.snapshot_macro(), pm_macro.test_macro(),
+             power_mill_link.probe_macro("E:/powermill-ai/output/pm_project.txt"))
+    for code in texts:
+        for line in code.splitlines():
+            stripped = line.strip()
+            if stripped.startswith(("PRINT", "MESSAGE")):
+                assert " + " not in stripped, stripped
+
+
+def test_snapshot_macro_checks_written_file():
+    """Снимок читается обратно — иначе не видно, записался файл или нет."""
+    code = pm_macro.snapshot_macro()
+    assert "FILE OPEN $outfile FOR READ AS chk" in code
+    assert "INT $pm_count = SIZE($pm_check_lines)" in code
+    assert "IF $pm_count == 0 {" in code
 
 
 def test_forward_slashes_are_normalized_for_windows_paths():
     """Если путь пришёл как E:/powermill-ai, в макросе он станет E:\\powermill-ai."""
     assert pm_macro._win_path(Path("E:/powermill-ai/output")) == "E:\\powermill-ai\\output"
     assert pm_macro._win_path(Path("/tmp/pmtest/data")) == "/tmp/pmtest/data"
+    # для макросов — наоборот, прямые слэши (см. test_file_open_paths_use_forward_slashes)
+    assert pm_macro.pml_path(Path("E:\\powermill-ai\\output")) == "E:/powermill-ai/output"
+    assert pm_macro.pml_path(Path("/tmp/pmtest/data")) == "/tmp/pmtest/data"
 
 
 def test_launcher_uses_windows_path_for_data_root(monkeypatch):

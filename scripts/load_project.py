@@ -141,6 +141,11 @@ def load_from_macro(log) -> int:
         print()
         print(f"(!) Не вышло взять снимок автоматически: {message}")
         print()
+        from src.pm_macro import PROJECT_FILE
+
+        print("Файл, который пишет макрос (его можно открыть пунктом 29):")
+        print(f"  {PROJECT_FILE}")
+        print()
         print("Что сделать (любой из вариантов):")
         print("  1) открой PowerMill с проектом и запусти пункт 24 снова —")
         print("     ассистент прочитает проект сам (живое API);")

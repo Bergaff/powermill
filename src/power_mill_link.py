@@ -77,19 +77,37 @@ PROBE_SECTIONS: tuple[tuple[str, str], ...] = (
 
 
 def _pml_text(path: Path) -> str:
-    """Путь для PML-строки: windows-разделители, обратные слэши не удваиваем."""
-    text = str(path)
-    if len(text) > 1 and text[1] == ":":
-        return text.replace("/", "\\")
-    return text
+    """Путь для строки PML: как в самой PowerMill — с прямыми слэшами.
+
+    Почему не обратные слэши: PowerMill сам возвращает пути через `/`
+    (`project_pathname(0)`), и рабочие макросы с форума Autodesk открывают файлы
+    ровно так: `FILE OPEN "S:/Templates/tool.pmlent" FOR WRITE AS output`.
+    Обратный слэш в PML-строке ведёт себя по-разному в разных местах, а на
+    живом PowerMill 2026 путь вида `E:\\powermill-ai\\...` заставил программу
+    спрашивать «Выберите файл >» вместо того, чтобы открыть файл. Windows
+    понимает оба разделителя, поэтому берём тот, в котором не сомневаемся.
+
+    Обратные слэши остаются там, где путь идёт в .bat (там нужен windows-вид):
+    см. `pm_macro._win_path`.
+    """
+    return str(path).replace("\\", "/")
 
 
 def probe_macro(output_file: Path | str | None = None) -> str:
     """Текст макроса разведки.
 
-    Важное отличие от первых версий: макрос **пишет файл**, а не только печатает
-    в окно сообщений PowerMill (оно может быть скрыто — тогда выглядит так, будто
-    макрос «ничего не делает»). В конце показывается окно с результатом.
+    Три вещи, из-за которых первые версии «ничего не делали» (живой
+    PowerMill 2026, разбор вывода из окна сообщений):
+
+    1. макрос только печатал — окно сообщений может быть скрыто, поэтому теперь
+       он ПИШЕТ ФАЙЛ и тут же читает его обратно, доказывая, что файл есть;
+    2. повторный запуск макроса падает на «local variable is already defined»
+       (переменные живут в сессии PowerMill) — первая строка теперь
+       `RESET LOCALVARS`;
+    3. путь с обратными слэшами PowerMill не разобрал и спросил
+       «Выберите файл >» — путь пишем с прямыми слэшами (_pml_text).
+
+    В конце макрос показывает окно: записан файл или нет.
     """
     target = Path(output_file) if output_file else Path("output") / "pm_project.txt"
     out = _pml_text(target)
@@ -101,8 +119,15 @@ def probe_macro(output_file: Path | str | None = None) -> str:
         "//  Макрос ничего не меняет: только читает списки объектов.",
         "// ============================================================",
         "",
-        f"STRING $outfile = '{out}'",
-        "FILE OPEN $outfile FOR WRITE AS out",
+        "// Переменные в PowerMill живут до конца сессии: без сброса второй",
+        "// запуск макроса падает на «local variable is already defined».",
+        "RESET LOCALVARS",
+        "",
+        f"STRING $pmout_file = '{out}'",
+        'STRING $pmout_head = "Файл снимка: " + $pmout_file',
+        "PRINT $pmout_head",
+        "",
+        "FILE OPEN $pmout_file FOR WRITE AS out",
         'FILE WRITE "--- POWERMILL AI PROBE START ---" TO out',
         "",
         'PRINT "--- POWERMILL AI PROBE START ---"',
@@ -122,10 +147,37 @@ def probe_macro(output_file: Path | str | None = None) -> str:
         'FILE WRITE "--- POWERMILL AI PROBE END ---" TO out',
         "FILE CLOSE out",
         "",
-        'PRINT "Готово. Снимок записан: " + $outfile',
-        'MESSAGE INFO "Разведка PowerMill AI закончена." + crlf + crlf + '
-        '"Снимок проекта записан в файл:" + crlf + $outfile + crlf + crlf + '
-        '"Что дальше: запусти пункт 24 меню — ассистент разберёт этот файл."',
+        "// Проверка: читаем файл обратно. Это доказательство, что снимок есть,",
+        "// а не «макрос что-то напечатал и ничего не сделал».",
+        "STRING LIST $pmout_lines = {}",
+        "FILE OPEN $pmout_file FOR READ AS chk",
+        "FILE READ $pmout_lines FROM chk",
+        "FILE CLOSE chk",
+        "INT $pmout_count = SIZE($pmout_lines)",
+        'STRING $pmout_count_msg = "Строк в файле снимка: " + STRING($pmout_count)',
+        "PRINT $pmout_count_msg",
+        "",
+        "STRING $pmout_first = \"\"",
+        "FILE OPEN $pmout_file FOR READ AS chk2",
+        "FILE READ $pmout_first FROM chk2",
+        "FILE CLOSE chk2",
+        'STRING $pmout_first_msg = "Первая строка файла: " + $pmout_first',
+        "PRINT $pmout_first_msg",
+        "",
+        'STRING $pmout_msg = "Разведка PowerMill AI закончена." + crlf + crlf',
+        '$pmout_msg = $pmout_msg + "Файл снимка:" + crlf + $pmout_file + crlf',
+        '$pmout_msg = $pmout_msg + "Строк в файле: " + STRING($pmout_count) + crlf',
+        '$pmout_msg = $pmout_msg + "Первая строка: " + $pmout_first + crlf + crlf',
+        '$pmout_msg = $pmout_msg + "Дальше: запусти пункт 24 меню — ассистент разберёт этот файл."',
+        "IF $pmout_count == 0 {",
+        '    PRINT "[ОШИБКА] Файл снимка пустой — пришли этот текст в чат."',
+        '    $pmout_msg = $pmout_msg + crlf + "ФАЙЛ НЕ ЗАПИСАЛСЯ (0 строк). Пришли этот текст в чат."',
+        "    MESSAGE WARN $pmout_msg",
+        "} ELSE {",
+        '    STRING $pmout_ok = "[OK] Снимок записан: " + $pmout_file',
+        "    PRINT $pmout_ok",
+        "    MESSAGE INFO $pmout_msg",
+        "}",
         "",
     ]
     return "\n".join(body)
@@ -441,12 +493,17 @@ def format_report(data: dict) -> str:
 
 
 def write_probe_macro(folder: Path) -> Path:
-    """Пишет макрос разведки в папку output (путь к файлу — внутри макроса)."""
+    """Пишет макрос разведки в папку output (путь к файлу — внутри макроса).
+
+    Переводы строк — windows-овские (CRLF), как у остальных наших макросов и
+    как у макросов самой PowerMill.
+    """
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / "PM_PROBE.mac"
     target = folder / "pm_project.txt"
-    path.write_text(probe_macro(target), encoding="utf-8")
+    text = probe_macro(target).replace("\n", "\r\n")
+    path.write_bytes(text.encode("utf-8"))
     return path
 
 

@@ -138,13 +138,12 @@ def test_write_probe_macro(tmp_path):
 def test_probe_macro_writes_file_not_only_console():
     """Макрос сам пишет файл — иначе кажется, что он «ничего не делает»."""
     text = link.probe_macro("E:/powermill-ai/output/pm_project.txt")
-    assert "FILE OPEN $outfile FOR WRITE AS out" in text
+    assert "FILE OPEN $pmout_file FOR WRITE AS out" in text
     assert "FILE WRITE" in text
     assert "FILE CLOSE out" in text
     assert "MESSAGE INFO" in text                  # видимое окно в конце
     assert 'FILE WRITE "MODELS:" TO out' in text
     assert "STOCK MODELS:" in text and "PATTERNS:" in text
-    assert "E:\\powermill-ai\\output\\pm_project.txt" in text
 
 
 def test_probe_macro_passes_our_pml_vocab():
@@ -160,6 +159,36 @@ def test_probe_macro_sections_cover_project():
     for header, folder in link.PROBE_SECTIONS:
         assert header and folder
         assert f'FOLDER("{folder}")' in link.probe_macro("x/pm_project.txt")
+
+
+def test_probe_macro_path_uses_forward_slashes():
+    """Обратные слэши PowerMill не разобрал: он спросил «Выберите файл >».
+
+    Поэтому путь в макросе — в том виде, в каком его отдаёт сама PowerMill
+    (`project_pathname(0)`): с прямыми слэшами. Windows понимает оба.
+    """
+    text = link.probe_macro("E:\\powermill-ai\\output\\pm_project.txt")
+    assert "E:/powermill-ai/output/pm_project.txt" in text
+    assert "E:\\powermill-ai" not in text
+    assert chr(92) * 2 not in text              # никаких удвоенных слэшей
+
+
+def test_probe_macro_resets_vars_and_checks_file():
+    """Две беды, найденные на живом PowerMill: повторный запуск и проверка файла.
+
+    1. Переменные живут в сессии PowerMill: без RESET LOCALVARS второй запуск
+       макроса падает на «local variable is already defined».
+    2. «Макрос ничего не делает» = текст ушёл только в окно сообщений. Теперь
+       макрос пишет файл и сразу читает его обратно, показывая число строк.
+    """
+    text = link.probe_macro("E:/powermill-ai/output/pm_project.txt")
+    lines = text.splitlines()
+    assert "RESET LOCALVARS" in lines[:15]
+    assert "FILE OPEN $pmout_file FOR READ AS chk" in text
+    assert "FILE READ $pmout_lines FROM chk" in text
+    assert "INT $pmout_count = SIZE($pmout_lines)" in text
+    assert "IF $pmout_count == 0 {" in text        # окно с ошибкой, если пусто
+    assert "$pmout_msg" in text                    # окно с путём и числом строк
 
 
 # --------------------------------------------------------------------------
