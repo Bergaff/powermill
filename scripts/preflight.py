@@ -76,9 +76,8 @@ def check_parse() -> int:
         ok(f"справка найдена: {HELP_DIR}")
 
     if not has_module("bs4"):
-        bad("нет библиотеки beautifulsoup4")
-        print("           -> запусти setup.bat (он установит все зависимости)")
-        problems += 1
+        warn("нет beautifulsoup4 — разберу встроенным парсером (медленнее, но работает)")
+        print("           -> для ускорения: setup_light.bat или setup.bat")
     else:
         ok("beautifulsoup4 на месте")
 
@@ -96,6 +95,8 @@ def check_search() -> int:
         bad("справка ещё не разобрана (нет output\\help_pages.jsonl)")
         print("           -> запусти start_parse_help.bat   (пробно: start_parse_help.bat 30)")
         return 1
+    if not has_module("bs4"):
+        warn("нет beautifulsoup4 — поиск работает, но разбор справки будет медленнее")
     ok(f"разобрано страниц: {help_parsed()}")
     if not HELP_SEARCH_DB.exists():
         warn("индекса поиска ещё нет — он соберётся автоматически сейчас")

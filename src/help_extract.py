@@ -166,13 +166,20 @@ def js_string_literals(src: str) -> list[tuple[int, int, str]]:
 
 _TAG_RE = re.compile(
     r"<\s*(?:/)?\s*(?:p|div|span|br|h[1-6]|ul|ol|li|table|tr|td|th|b|i|u|a|img|"
-    r"font|strong|em|blockquote|pre|code|tbody|thead|center|sup|sub)\b",
+    r"font|strong|em|blockquote|pre|code|tbody|thead|center|sup|sub|"
+    r"html|head|body|title|meta|script|style|link|dl|dt|dd|hr|section|article)\b",
     re.I,
 )
+_DOCTYPE_RE = re.compile(r"<!DOCTYPE\s+html", re.I)
 
 
 def _looks_like_html(text: str) -> bool:
-    return bool(_TAG_RE.search(text))
+    """HTML ли это. Важно: страницы-редиректы справки содержат только
+    html/head/meta/title/body — без div/p, поэтому проверяем и DOCTYPE."""
+    head = text[:3000]
+    if _DOCTYPE_RE.search(head) or "<html" in head.lower():
+        return True
+    return bool(_TAG_RE.search(head))
 
 
 def _group_literals(src: str, literals: list[tuple[int, int, str]]) -> list[str]:
@@ -394,7 +401,14 @@ def html_to_structured_text(html: str, keep_images: bool = True) -> str:
 
 def _regex_html_to_text(html: str, keep_images: bool = True) -> str:
     """Фолбэк без bs4: грубое, но рабочее преобразование HTML в текст."""
-    text = re.sub(r"(?is)<\s*(script|style|noscript)\b[^>]*>.*?<\s*/\s*\1\s*>", " ", html)
+    # head целиком (title/meta/ссылки на скрипты) — это НЕ содержимое страницы,
+    # иначе заголовок попадал бы в тело (важно для страниц-редиректов)
+    text = re.sub(r"(?is)<head\b[^>]*>.*?</head\s*>", " ", html)
+    text = re.sub(r"(?is)<title\b[^>]*>.*?</title\s*>", " ", text)
+    text = re.sub(r"(?is)<meta\b[^>]*>", " ", text)
+    text = re.sub(r"(?is)<link\b[^>]*>", " ", text)
+    text = re.sub(r"(?s)<!--.*?-->", " ", text)
+    text = re.sub(r"(?is)<\s*(script|style|noscript)\b[^>]*>.*?<\s*/\s*\1\s*>", " ", text)
     if not keep_images:
         text = re.sub(r"(?is)<img[^>]*>", " ", text)
     else:
@@ -478,7 +492,97 @@ def _plain_text(text: str) -> str:
 
 
 # --------------------------------------------------------------------------
-# 5. Эвристики для дерева справки
+# 5. Метаданные страниц справки (Autodesk: topicid, contextid, topic-type)
+# --------------------------------------------------------------------------
+_META_RE = re.compile(r'<meta\s+name="([\w\-]+)"\s+content="([^"]*)"', re.I)
+_GUID_RE = re.compile(r"GUID-[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}", re.I)
+
+
+def extract_meta(html: str) -> dict:
+    """<meta name=... content=...> -> словарь (topicid, contextid, topic-type, ...)."""
+    meta: dict[str, str] = {}
+    for name, content in _META_RE.findall(html):
+        key = name.strip().lower()
+        if key not in meta:
+            meta[key] = content.strip()
+    if "topicid" not in meta:
+        guid = _GUID_RE.search(html[:4000])
+        if guid:
+            meta["topicid"] = guid.group(0)
+    return meta
+
+
+_GUID_HREF_RE = re.compile(
+    r"""["'](?:\.\./)?(?:\./)?(files/)?(GUID-[0-9A-Fa-f\-]{4,40}\.htm)["']""",
+    re.I,
+)
+
+
+def find_redirect_target(html: str) -> str:
+    """Куда ведёт страница-редирект: 'files/GUID-....htm' (или '').
+
+    Типичный вид в справке Autodesk:
+        window.location.href = "../files/GUID-0001-....htm";
+    """
+    m = _GUID_HREF_RE.search(html)
+    if m:
+        name = m.group(2)
+        # нормализуем к виду files/GUID-....htm (так же, как в оглавлении)
+        return name if name.lower().startswith("files/") else f"files/{name}"
+    guid = _GUID_RE.search(html)
+    if guid:
+        return f"files/{guid.group(0)}.htm"
+    return ""
+
+
+def load_page(path: Path) -> dict:
+    """Файл справки -> {title, text, html, meta, topic_type, redirect_to}."""
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return {"title": "", "text": "", "html": "", "meta": {}, "topic_type": "",
+                "redirect_to": ""}
+
+    data = decode_html(raw)
+    is_js = path.suffix.lower() == ".js"
+    html = data
+    if is_js or not _looks_like_html(data):
+        unwrapped = unwrap_wrapped_js(data)
+        if unwrapped:
+            html = unwrapped
+
+    meta = extract_meta(data)
+    if html is not data:
+        # в .htm-заглушке метаданные есть всегда; в wrapped-файле они тоже могут
+        # быть — добираем то, чего не хватает
+        for key, value in extract_meta(html).items():
+            meta.setdefault(key, value)
+
+    title = guess_title(html, fallback=path.stem)
+    text = html_to_structured_text(html) if _looks_like_html(html) else _plain_text(html)
+
+    # Страница-редирект: полезного текста в ней нет по определению (только скрипт
+    # перехода). Любой «выловленный» текст здесь — мусор из head/скриптов.
+    is_redirect = meta.get("topic-type", "").lower() == "redirect"
+    if is_redirect:
+        text = ""
+        redirect_to = find_redirect_target(html) or redirect_to
+    else:
+        # у обычной статьи ссылки на другие темы — не редирект
+        redirect_to = ""
+
+    return {
+        "title": title,
+        "text": text,
+        "html": html,
+        "meta": meta,
+        "topic_type": meta.get("topic-type", "").lower(),
+        "redirect_to": redirect_to,
+    }
+
+
+# --------------------------------------------------------------------------
+# 6. Эвристики для дерева справки
 # --------------------------------------------------------------------------
 def looks_like_help_root(path: Path) -> bool:
     """Похоже ли, что внутри лежит установленная справка (files/ + scripts/)."""

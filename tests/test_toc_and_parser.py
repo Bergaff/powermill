@@ -98,3 +98,20 @@ def test_parse_all_help_respects_limit(parsed_pages):
 
     pages = parse_all_help(limit=2, roots=[FIXTURE])
     assert len(pages) == 2
+
+
+def test_contexthelp_term_becomes_alias_of_article(parsed_pages):
+    """Термин-редирект из contexthelp привязывается к статье алиасом."""
+    page = next(p for p in parsed_pages if p["title"] == "Чистовая обработка по кривой")
+    assert "Обработка по кривой" in (page.get("aliases") or [])
+
+
+def test_parse_all_help_reads_contextid(parsed_pages):
+    page = next(p for p in parsed_pages if p["title"] == "Чистовая обработка по кривой")
+    assert page["contextid"] == "SWARFFINISHING"
+    assert page["topic_type"] == "concept"
+
+
+def test_redirect_pages_are_not_stored_as_separate_articles(parsed_pages):
+    """Страница-редирект не должна становиться «статьёй» без содержимого."""
+    assert not any(p.get("kind") == "redirect" and p.get("text") for p in parsed_pages)

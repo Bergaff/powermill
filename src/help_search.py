@@ -23,7 +23,7 @@ PAGES_FILE = OUTPUT_DIR / "help_pages.jsonl"
 
 # Версия схемы FTS-таблицы. При несовпадении индекс пересоздаётся автоматически
 # (данные берутся из help_pages.jsonl, потерять их нельзя).
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _TOKEN_RE = re.compile(r"[0-9A-Za-zА-Яа-яЁё_]{2,}")
 _STOPWORDS = {
@@ -79,7 +79,7 @@ class HelpSearch:
             conn = sqlite3.connect(str(self.db_path))
             _create = (
                 "CREATE VIRTUAL TABLE IF NOT EXISTS pages USING fts5("
-                "source, title, section, kind UNINDEXED, body, "
+                "source, title, section, alias, contextid, kind UNINDEXED, body, "
                 "tokenize=\"unicode61 remove_diacritics 2\")"
             )
             conn.execute(_create)
@@ -115,7 +115,9 @@ class HelpSearch:
         if pages is None:
             if not self.pages_file.exists():
                 if verbose:
-                    print(f"⚠ Нет {self.pages_file} — сначала запусти src.html_parser")
+                    print(f"(!) Нет файла {self.pages_file}")
+                    print("    Сначала разбери справку: start_parse_help.bat")
+                    print("    (пункт 4 или 5 в start_menu.bat)")
                 return 0
             pages = [
                 json.loads(line)
@@ -130,14 +132,17 @@ class HelpSearch:
                 p.get("source", ""),
                 p.get("title", ""),
                 p.get("breadcrumb", "") or p.get("section", ""),
+                " ; ".join(p.get("aliases") or []),
+                " ".join(p.get("contextids") or ([p["contextid"]] if p.get("contextid") else [])),
                 p.get("kind", "page"),
                 p.get("text", ""),
             )
             for p in pages
-            if p.get("text", "").strip()
+            if (p.get("text") or "").strip()
         ]
         conn.executemany(
-            "INSERT INTO pages (source, title, section, kind, body) VALUES (?,?,?,?,?)",
+            "INSERT INTO pages (source, title, section, alias, contextid, kind, body) "
+            "VALUES (?,?,?,?,?,?,?)",
             rows,
         )
         conn.commit()
@@ -170,7 +175,7 @@ class HelpSearch:
             return []
         sql = (
             "SELECT source, title, section, kind, "
-            "snippet(pages, 4, '«', '»', ' … ', 18) AS snip, bm25(pages) AS rank "
+            "snippet(pages, 6, '«', '»', ' … ', 18) AS snip, bm25(pages) AS rank "
             "FROM pages WHERE pages MATCH ? ORDER BY rank LIMIT ?"
         )
         # mode -> strict: строгий AND считаем надёжным попаданием,
@@ -253,10 +258,19 @@ def print_hits(hits: list[dict], preview: int = 300) -> None:
         print(f"   файл: {hit['source']}")
 
 
-def interactive(top_k: int = 6) -> None:
+def interactive(top_k: int = 6) -> int:
     """Поиск по справке без ИИ и без векторов — мгновенно, только ключевые слова."""
     hs = HelpSearch()
+    if not hs.pages_file.exists():
+        print("Справка ещё не разобрана — искать пока нечего.")
+        print()
+        print("Сделай так:")
+        print("  1) запусти  start_parse_help.bat      (полный разбор, 1-3 минуты)")
+        print("     или        start_parse_help.bat 30 (проба на 30 страницах)")
+        print("  2) потом снова запусти этот поиск")
+        return 2
     if hs.is_stale():
+        print("Собираю индекс поиска (это быстро)...")
         hs.build()
     print("=" * 58)
     print("  ПОИСК ПО СПРАВКЕ PowerMill (без ИИ, мгновенный)")
@@ -281,15 +295,34 @@ def interactive(top_k: int = 6) -> None:
         print_hits(hits)
 
 
-if __name__ == "__main__":
+def main_cli() -> int:
     import sys
 
+    from src.applog import start_log
+
+    start_log("help_search")
     hs = HelpSearch()
     if "--rebuild" in sys.argv or hs.is_stale():
+        if not hs.pages_file.exists():
+            print(f"(!) Нет файла {hs.pages_file}")
+            print("    Сначала разбери справку: start_parse_help.bat")
+            return 2
         hs.build()
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    if args:
+        pass
+    elif "--rebuild" in sys.argv:
+        print(f"Индекс собран: {hs.count()} страниц -> {hs.db_path}")
+        return 0
     if args:
         print(f"Страниц в FTS-индексе: {hs.count()}")
         print_hits(hs.search(" ".join(args), top_k=5), preview=120)
     else:
-        interactive()
+        return interactive()
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+
+    sys.exit(main_cli())

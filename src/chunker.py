@@ -14,7 +14,34 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+try:
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+except ImportError:  # pragma: no cover — свой простой сплиттер, чтобы работало без install
+    class RecursiveCharacterTextSplitter:  # type: ignore[no-redef]
+        """Мини-замена langchain-сплиттера: режем по абзацам/строкам с перекрытием."""
+
+        def __init__(self, chunk_size: int = 500, chunk_overlap: int = 100,
+                     separators=None, length_function=len, **kwargs):
+            self.chunk_size = chunk_size
+            self.chunk_overlap = chunk_overlap
+
+        def split_text(self, text: str) -> list[str]:
+            paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+            chunks: list[str] = []
+            current = ""
+            for para in paragraphs:
+                if len(current) + len(para) + 2 <= self.chunk_size:
+                    current = f"{current}\n\n{para}" if current else para
+                    continue
+                if current:
+                    chunks.append(current)
+                while len(para) > self.chunk_size:
+                    chunks.append(para[: self.chunk_size])
+                    para = para[self.chunk_size - self.chunk_overlap:]
+                current = para
+            if current:
+                chunks.append(current)
+            return chunks
 
 from config import (
     CHUNK_OVERLAP,
@@ -70,12 +97,29 @@ def load_help_pages(path: Path | None = None) -> list[dict]:
 
 
 def help_header(page: dict) -> str:
-    """Шапка чанка: раздел + заголовок страницы."""
+    """Шапка чанка: раздел + заголовок + термины (aliases) + contextid.
+
+    Термины из contexthelp («Иерархия 2D-элементов») и служебные идентификаторы
+    (`contextid: TOOLDIALOG`) резко улучшают попадание: технолог спрашивает
+    именно ими, а в тексте статьи этих слов может не быть вовсе.
+    """
     crumb = page.get("breadcrumb") or page.get("title") or ""
     title = page.get("title") or ""
     if crumb and title and not crumb.rstrip().endswith(title):
         crumb = f"{crumb} > {title}"
-    return f"[Справка PowerMill · {crumb or page.get('path', '')}]"
+    header = f"[Справка PowerMill · {crumb or page.get('path', '')}"
+
+    aliases = [a for a in (page.get("aliases") or []) if a][:6]
+    if aliases:
+        header += " · также: " + "; ".join(aliases)
+
+    contextids = [c for c in (page.get("contextids") or []) if c][:4]
+    if not contextids and page.get("contextid"):
+        contextids = [page["contextid"]]
+    if contextids:
+        header += " · contextid: " + ", ".join(contextids)
+
+    return header + "]"
 
 
 def chunk_help_page(page: dict, splitter: RecursiveCharacterTextSplitter | None = None) -> list[dict]:

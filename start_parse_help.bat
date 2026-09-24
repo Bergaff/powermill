@@ -1,77 +1,87 @@
 @echo off
 chcp 65001 >nul
-title PowerMill AI - разбор справки PowerMill
+title PowerMill AI - разбор справки
 set APP_MODE=turbo
+setlocal
 cd /d "%~dp0"
 
 echo =========================================================
 echo   РАЗБОР СПРАВКИ PowerMill
-echo   Текст берётся из files\*.htm И из wrapped-files\*.js
-echo   (там, где он на самом деле лежит)
+echo   Текст берётся из files\*.htm и из wrapped-files\*.js
+echo   Весь вывод пишется в  output\logs\parse_help.log
 echo =========================================================
 echo.
 
-if exist "venv\Scripts\python.exe" (
-    call venv\Scripts\activate
-) else (
-    echo [!] Виртуального окружения нет - работаю системным Python.
-    echo     Если чего-то не хватает - запусти setup_light.bat (1 минута)
-    echo.
-)
+set "PY=python"
+if exist "venv\Scripts\python.exe" set "PY=venv\Scripts\python.exe"
+if exist "venv\Scripts\python.exe" goto venv_ok
+echo [!] Виртуального окружения нет - работаю системным Python.
+echo     Если чего-то не хватает: setup_light.bat - 1 минута
+echo.
+:venv_ok
 
-python -m scripts.preflight parse
-if errorlevel 1 (
-    echo.
-    pause
-    exit /b 1
-)
+set "LIMIT=%~1"
+if not "%LIMIT%"=="" echo Режим ПРОБЫ: разбираю только %LIMIT% страниц
+echo Подожди, идёт работа...
 echo.
 
-rem Пробный запуск:  start_parse_help.bat 30
-if not "%~1"=="" (
-    echo [ПРОБНЫЙ ЗАПУСК] разбираю только %~1 страниц...
-    python -m src.html_parser --limit %~1
-) else (
-    echo [1/2] Полный разбор справки (обычно 1-3 минуты)...
-    python -m src.html_parser
-)
+if "%LIMIT%"=="" goto full_parse
+"%PY%" -m src.html_parser --limit %LIMIT%
+goto after_parse
 
-if errorlevel 1 (
-    echo.
-    echo [!] Разбор не удался. Подготовь отчёт и пришли в чат:
-    echo        scripts\make_report.bat
-    echo.
-    pause
-    exit /b 1
-)
+:full_parse
+"%PY%" -m src.html_parser
 
+:after_parse
+set "RC=%ERRORLEVEL%"
 echo.
-echo [2/2] Собираю индекс быстрого поиска (SQLite FTS5)...
-python -m src.help_search --rebuild
-if errorlevel 1 (
-    echo [!] Не удалось собрать индекс поиска
-    pause
-    exit /b 1
-)
+if not "%RC%"=="0" goto parse_failed
+echo [ГОТОВО] Разбор справки завершён.
+goto index_step
 
+:parse_failed
+echo [!] РАЗБОР НЕ УДАЛСЯ, код ошибки %RC%
 echo.
-python -m scripts.base_status
-
+echo --- Последние строки лога ---
+powershell -NoProfile -Command "if (Test-Path 'output\logs\parse_help.log') { Get-Content -Tail 25 'output\logs\parse_help.log' } else { 'лог не найден' }"
+echo ----------------------------
 echo.
-echo =========================================================
-echo   ГОТОВО.
-echo   Страницы:  output\help_pages.jsonl
-echo   Дерево:    output\help_toc.txt
-echo   Отчёт:     output\help_report.txt
+echo Что делать:
+echo   1) Проверь папку справки:  пункт 9 меню
+echo   2) Нет venv - запусти:     setup_light.bat
+echo   3) Пришли в чат файл:      output\logs\parse_help.log
 echo.
-echo   Проверить поиск (без ИИ):
-echo      start_help_search.bat
-echo   Собрать векторную базу:
-echo      start_reindex_help.bat
-echo =========================================================
-if not "%~1"=="" (
-    echo.
-    echo Открываю отчёт разбора...
-    start "" notepad "output\help_report.txt"
-)
 pause
+exit /b 1
+
+:index_step
+echo.
+echo Собираю индекс быстрого поиска...
+"%PY%" -m src.help_search --rebuild
+if not "%ERRORLEVEL%"=="0" goto index_failed
+echo.
+"%PY%" -m scripts.base_status
+echo.
+echo =========================================================
+echo   ГОТОВО
+echo   Страницы: output\help_pages.jsonl
+echo   Дерево:   output\help_toc.txt
+echo   Отчёт:    output\help_report.txt
+echo.
+echo   Дальше: пункт 2 меню - поиск по справке
+echo =========================================================
+echo.
+if "%LIMIT%"=="" goto finish
+echo Открываю отчёт разбора...
+if exist "output\help_report.txt" start "" notepad "output\help_report.txt"
+goto finish
+
+:index_failed
+echo.
+echo [!] Разбор прошёл, но индекс поиска не собрался.
+echo     Пришли в чат: output\logs\help_search.log
+echo.
+
+:finish
+pause
+exit /b 0

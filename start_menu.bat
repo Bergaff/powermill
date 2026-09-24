@@ -32,10 +32,11 @@ echo     15  -  Починить Ollama (не отвечает)
 echo     16  -  Скачать pytorch (если не влез)
 echo     17  -  Обновить программу из Git (git pull)
 echo     18  -  Быстрая установка       (разбор+поиск, 1 минута)
+echo     19  -  Логи последних запусков (если что-то не сработало)
 echo.
 echo      0  -  Выход
 echo.
-set /p choice="   Выбор (0-18): "
+set /p choice="   Выбор (0-19): "
 
 if "%choice%"=="1"  goto chat
 if "%choice%"=="2"  goto search
@@ -55,6 +56,7 @@ if "%choice%"=="15" goto fixollama
 if "%choice%"=="16" goto torch
 if "%choice%"=="17" goto update
 if "%choice%"=="18" goto light
+if "%choice%"=="19" goto logs
 if "%choice%"=="0"  exit /b 0
 goto menu
 
@@ -128,4 +130,8 @@ goto menu
 
 :light
 call "%~dp0setup_light.bat"
+goto menu
+
+:logs
+call "%~dp0scripts\show_logs.bat"
 goto menu

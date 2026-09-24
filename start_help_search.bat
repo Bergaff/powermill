@@ -1,29 +1,33 @@
 @echo off
 chcp 65001 >nul
-title PowerMill AI - поиск по справке (без ИИ)
+title PowerMill AI - поиск по справке
+setlocal
 cd /d "%~dp0"
 
 echo =========================================================
-echo   ПОИСК ПО СПРАВКЕ PowerMill  —  без ИИ, мгновенно
-echo   Работает на ключевых словах, эмбеддинги не нужны.
-echo   Если ответа нет — сначала разбери справку:
-echo       start_parse_help.bat
+echo   ПОИСК ПО СПРАВКЕ PowerMill - без ИИ, мгновенно
 echo =========================================================
 echo.
 
-if exist "venv\Scripts\python.exe" (
-    call venv\Scripts\activate
-) else (
-    echo [!] Виртуального окружения нет - работаю системным Python.
-    echo     Если чего-то не хватает - запусти setup_light.bat (1 минута)
-    echo.
-)
+set "PY=python"
+if exist "venv\Scripts\python.exe" set "PY=venv\Scripts\python.exe"
+if exist "venv\Scripts\python.exe" goto run
+echo [!] Виртуального окружения нет - работаю системным Python.
+echo.
+:run
 
-if not "%~1"=="" (
-    python -m src.help_search %*
-) else (
-    python -m src.help_search
-)
+"%PY%" -m scripts.preflight search
+if errorlevel 1 goto failed
 
 echo.
+"%PY%" -m src.help_search %*
+echo.
 pause
+exit /b 0
+
+:failed
+echo.
+echo [!] Сначала разбери справку: запусти start_parse_help.bat
+echo.
+pause
+exit /b 1

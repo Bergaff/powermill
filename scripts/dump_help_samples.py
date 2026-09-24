@@ -75,6 +75,46 @@ def copy_sample(src: Path, folder: Path) -> Path | None:
         return None
 
 
+# расширения, которые имеет смысл разбирать как текст
+TEXT_EXT = (".htm", ".html", ".txt", ".xml", ".json", ".mc", ".mac", ".pml", ".chm")
+
+
+def dump_other_root(root: Path) -> None:
+    """Показывает, что лежит внутри нестандартного корня (PARREF, PARSUM, DOC, HELP)."""
+    hr(f"НЕСТАНДАРТНЫЙ КОРЕНЬ: {root}")
+    print("  (здесь нет files/ и contexthelp/ — смотрю, что есть)")
+    try:
+        subdirs = sorted(p for p in root.iterdir() if p.is_dir())
+    except OSError as e:
+        print(f"  !! не прочитать: {e}")
+        return
+
+    for sub in subdirs:
+        files = [p for p in sub.rglob("*") if p.is_file()]
+        if not files:
+            print(f"\n  [{sub.name}] — пусто")
+            continue
+        exts: dict[str, int] = {}
+        for f in files:
+            exts[f.suffix.lower() or "(без расширения)"] = exts.get(f.suffix.lower() or "(без расширения)", 0) + 1
+        total_mb = sum(f.stat().st_size for f in files) / 1e6
+        print(f"\n  [{sub.name}] файлов: {len(files)}, {total_mb:.1f} МБ")
+        print("      расширения: " + ", ".join(f"{k}: {v}" for k, v in sorted(exts.items(), key=lambda kv: -kv[1])[:8]))
+
+        biggest = sorted(files, key=lambda f: -f.stat().st_size)[:5]
+        for f in biggest:
+            print(f"      {f.stat().st_size:>9} байт  {f.relative_to(sub)}")
+
+        # образец текстового файла — самое важное
+        text_files = [f for f in files if f.suffix.lower() in TEXT_EXT]
+        if text_files:
+            sample = max(text_files, key=lambda f: f.stat().st_size)
+            preview(sample, chars=900)
+            copy_sample(sample, SAMPLES_DIR)
+        else:
+            print("      (текстовых файлов .htm/.txt/.xml не найдено)")
+
+
 def main() -> None:
     SAMPLES_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -111,6 +151,10 @@ def main() -> None:
         wrapped_dir = lang / HELP_WRAPPED_DIR
         ctx_dir = lang / "contexthelp"
         scripts_dir = lang / "scripts"
+
+        # Нестандартный корень (например, установка PowerMill: DOC/HELP/PARREF/PARSUM)
+        if not files_dir.is_dir() and not ctx_dir.is_dir():
+            dump_other_root(root)
 
         hr(f"3.{idx}.{1} files\\ — {lang.name}\\{HELP_FILES_DIR}")
         count, rows = dir_summary(files_dir)
@@ -150,8 +194,8 @@ def main() -> None:
             preview(toc, chars=2000)
             copy_sample(toc, SAMPLES_DIR)
         ctx_files = sorted(ctx_dir.glob("*.htm")) if ctx_dir.is_dir() else []
-        for ctx in ctx_files[:1]:
-            preview(ctx, chars=700)
+        for ctx in ctx_files[:2]:
+            preview(ctx, chars=1900)   # целиком: иначе не видно, куда ведёт редирект
             copy_sample(ctx, SAMPLES_DIR)
 
         toc_nodes = []
@@ -166,6 +210,9 @@ def main() -> None:
     hr("ИТОГ")
     print(f"Образцы файлов: {SAMPLES_DIR}")
     print("Пришли вывод этого скрипта в чат — по нему будет ясно, как настроить парсер.")
+    print()
+    print("Если в разделе 'НЕСТАНДАРТНЫЙ КОРЕНЬ' видно файлы PARREF/PARSUM —")
+    print("это справочник PML; пришли его образец в чат, добавлю разбор.")
 
 
 if __name__ == "__main__":

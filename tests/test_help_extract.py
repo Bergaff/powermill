@@ -5,10 +5,13 @@ from pathlib import Path
 
 from src.help_extract import (
     decode_html,
+    extract_meta,
     extract_page_text,
+    find_redirect_target,
     html_to_structured_text,
     is_junk_page,
     js_string_literals,
+    load_page,
     unescape_js,
     unwrap_wrapped_js,
 )
@@ -138,3 +141,54 @@ def test_is_junk_page():
     assert is_junk_page("")
     assert is_junk_page("коротко")
     assert not is_junk_page("Достаточно длинный текст страницы справки " * 3)
+
+
+# --------------------------------------------------------------------------
+# Метаданные и страницы-редиректы справки Autodesk
+# --------------------------------------------------------------------------
+def test_extract_meta_reads_autodesk_fields():
+    html = ('<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">'
+            '<meta name="contextid" content="TOOLDIALOG">'
+            '<meta name="topic-type" content="concept">'
+            '<meta name="topicid" content="GUID-0004FC89-DD8A-4718-A121-19665090EA7D">')
+    meta = extract_meta(html)
+    assert meta["contextid"] == "TOOLDIALOG"
+    assert meta["topic-type"] == "concept"
+    assert meta["topicid"].startswith("GUID-")
+
+
+def test_find_redirect_target_autodesk_style():
+    js = 'window.location.href = "../files/GUID-0004FC89-DD8A-4718-A121-19665090EA7D.htm";'
+    assert find_redirect_target(js) == "files/GUID-0004FC89-DD8A-4718-A121-19665090EA7D.htm"
+
+
+def test_load_page_marks_redirect_and_returns_no_text():
+    info = load_page(FIXTURE / "l.rus" / "contexthelp" / "CTX-0002.htm")
+    assert info["topic_type"] == "redirect"
+    assert info["title"] == "Обработка по кривой"
+    assert info["text"] == ""                       # в редиректе текста нет
+    assert info["redirect_to"] == "files/GUID-0001.htm"
+
+
+def test_load_page_does_not_treat_links_as_redirect():
+    """Обычная статья со ссылкой на другую тему — это НЕ редирект."""
+    info = load_page(FIXTURE / "l.rus" / "wrapped-files" / "GUID-0002.htm.js")
+    assert info["topic_type"] != "redirect"
+    assert info["redirect_to"] == ""
+    assert "5-axis" in info["text"] or "5-осев" in info["text"]
+
+
+def test_head_title_not_leaked_into_body():
+    """Заголовок из <head> не должен попадать в текст страницы."""
+    html = ("<html><head><title>Служебный заголовок</title>"
+            "<meta name='x' content='y'></head><body></body></html>")
+    assert html_to_structured_text(html).strip() == ""
+
+
+def test_load_page_reads_contextid_from_stub():
+    """В .htm-заглушке текста нет, но есть метаданные Autodesk (contextid)."""
+    info = load_page(FIXTURE / "l.rus" / "files" / "GUID-0001.htm")
+    assert info["meta"]["contextid"] == "SWARFFINISHING"
+    assert info["meta"]["topic-type"] == "concept"
+    assert info["text"].strip() == ""
+    assert info["redirect_to"] == ""

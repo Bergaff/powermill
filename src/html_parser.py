@@ -32,7 +32,13 @@ import json
 import re
 from pathlib import Path
 
-from tqdm import tqdm
+try:  # tqdm — только для прогресс-бара; без него разбор всё равно работает
+    from tqdm import tqdm
+except ImportError:  # pragma: no cover
+    def tqdm(iterable, **kwargs):
+        total = kwargs.get("total") or (len(iterable) if hasattr(iterable, "__len__") else "?")
+        print(f"   ... разбираю {total} файлов (без прогресс-бара)")
+        return iterable
 
 from config import (
     HELP_DIR,
@@ -48,8 +54,8 @@ from config import (
 from src.help_extract import (
     extract_page_text,
     is_generic_title,
-    is_junk_page,
     looks_like_help_root,
+    load_page,
 )
 from src.toc_parser import load_toc, save_toc
 
@@ -167,22 +173,59 @@ def _read_text(path: Path) -> tuple[str, str]:
     return extract_page_text(raw, path)
 
 
+def wrapped_html(root: Path, page: Path) -> dict:
+    """Читает wrapped-файл страницы (там лежит настоящий HTML и его метаданные)."""
+    for cand in wrapped_candidates(root, page):
+        info = load_page(cand)
+        if len(info["text"]) >= MIN_TEXT_LEN:
+            return info
+    return {}
+
+
 def parse_page(root: Path, page: Path, toc_map: dict[str, dict]) -> dict | None:
     """Одна страница справки -> словарь. None, если текста нет."""
-    title, text = _read_text(page)
+    stub = load_page(page)                      # .htm: заглушка, но с метаданными
+    title, text = stub["title"], stub["text"]
+    meta = dict(stub["meta"])
+    redirect_to = stub["redirect_to"] or ""
     source_used = "htm"
 
     if len(text) < MIN_TEXT_LEN:
-        for cand in wrapped_candidates(root, page):
-            w_title, w_text = _read_text(cand)
-            if len(w_text) > len(text):
-                title = w_title or title
-                text = w_text
-                source_used = f"wrapped:{cand.name}"
-            if len(text) >= MIN_TEXT_LEN:
-                break
+        wrapped = wrapped_html(root, page)      # настоящий текст страницы
+        if wrapped:
+            title = wrapped["title"] or title
+            text = wrapped["text"]
+            source_used = "wrapped"
+            for key, value in wrapped["meta"].items():
+                meta.setdefault(key, value)
+            redirect_to = redirect_to or wrapped["redirect_to"]
 
+    topic_type = (meta.get("topic-type") or "").lower()
+
+    # Страницы-редиректы (contexthelp): полезного текста нет, но есть
+    # человеческий заголовок термина и ссылка на настоящую страницу —
+    # такие записи пригодятся для поиска по терминам.
     if len(text.strip()) < MIN_TEXT_LEN:
+        if topic_type == "redirect" or redirect_to:
+            rel_short = page.relative_to(root).as_posix()
+            return {
+                "source": f"{root.name}/{rel_short}",
+                "root": root.name,
+                "path": rel_short,
+                "lang": root.name,
+                "kind": "redirect",
+                "title": title or page.stem,
+                "breadcrumb": title or page.stem,
+                "section": "",
+                "order": 10_000,
+                "text_chars": 0,
+                "extracted_from": "redirect",
+                "redirect_to": redirect_to,
+                "contextid": meta.get("contextid", ""),
+                "topicid": meta.get("topicid", ""),
+                "topic_type": topic_type,
+                "text": "",
+            }
         return None
 
     rel = page.relative_to(root).as_posix()
@@ -207,6 +250,10 @@ def parse_page(root: Path, page: Path, toc_map: dict[str, dict]) -> dict | None:
         "order": toc_entry["order"] if toc_entry else 10_000,
         "text_chars": len(text),
         "extracted_from": source_used,
+        "redirect_to": redirect_to,
+        "contextid": meta.get("contextid", ""),
+        "topicid": meta.get("topicid", ""),
+        "topic_type": topic_type or ("concept" if text else ""),
         "text": text,
     }
 
@@ -267,6 +314,7 @@ def parse_all_help(limit: int | None = None, lang: str | None = None,
     print(f"📘 Всего к разбору: {len(all_files)} страниц")
 
     pages: list[dict] = []
+    redirects: list[dict] = []
     stats: dict[str, dict[str, list[int]]] = {}
     seen_hashes: dict[str, str] = {}
     duplicates = 0
@@ -295,6 +343,11 @@ def parse_all_help(limit: int | None = None, lang: str | None = None,
                 empty_samples.append(f"   {rel}")
             continue
 
+        if not page.get("text"):
+            # страница-редирект: текста нет, но есть заголовок термина
+            redirects.append(page)
+            continue
+
         digest = hashlib.md5(page["text"].encode("utf-8")).hexdigest()
         if digest in seen_hashes:
             duplicates += 1
@@ -307,6 +360,66 @@ def parse_all_help(limit: int | None = None, lang: str | None = None,
         cell[1] += 1
         cell[2] += page["text_chars"]
         pages.append(page)
+
+    # Разрешаем редиректы: заголовок термина уходит в aliases целевой страницы.
+    # Так «Иерархия 2D-элементов» ищется по настоящей статье, а не по пустышке.
+    by_rel = {p["path"].lower(): p for p in pages}
+    by_name = {Path(p["path"]).name.lower(): p for p in pages}
+    resolved = 0
+    leftover_redirects: list[dict] = []
+    for red in redirects:
+        target = (red.get("redirect_to") or "").replace("\\", "/").lower()
+        target_page = None
+        if target:
+            target_page = by_rel.get(target) or by_name.get(Path(target).name)
+            if target_page is None and not target.startswith("files/"):
+                target_page = by_rel.get("files/" + target) or by_rel.get(target)
+        if target_page is not None:
+            aliases = target_page.setdefault("aliases", [])
+            term = red.get("title", "")
+            if term and term not in aliases:
+                aliases.append(term)
+            if red.get("contextid"):
+                target_page.setdefault("contextids", [])
+                if red["contextid"] not in target_page["contextids"]:
+                    target_page["contextids"].append(red["contextid"])
+            resolved += 1
+        else:
+            leftover_redirects.append(red)
+
+    # Второй шанс: привязка по contextid. В files\*.htm есть
+    # <meta name="contextid" content="TOOLDIALOG"> — у термина-редиректа он часто тот же.
+    by_context: dict[str, dict] = {}
+    for page in pages:
+        for cid in page.get("contextids") or []:
+            by_context.setdefault(cid.upper(), page)
+        if page.get("contextid"):
+            by_context.setdefault(page["contextid"].upper(), page)
+
+    still_left: list[dict] = []
+    for red in leftover_redirects:
+        cid = (red.get("contextid") or "").upper()
+        target_page = by_context.get(cid) if cid else None
+        if target_page is not None:
+            aliases = target_page.setdefault("aliases", [])
+            term = red.get("title", "")
+            if term and term not in aliases:
+                aliases.append(term)
+            resolved += 1
+        else:
+            still_left.append(red)
+    leftover_redirects = still_left
+
+    # Оставшиеся термины держим как короткие записи-подсказки: по названию
+    # термина всё равно можно найти нужный раздел справки.
+    for red in leftover_redirects:
+        term = red.get("title", "")
+        red["text"] = (f"Термин справки PowerMill: «{term}». "
+                       f"Смотрите соответствующий раздел документации.")
+        red["text_chars"] = len(red["text"])
+        red["extracted_from"] = "redirect-only"
+
+    pages.extend(leftover_redirects)
 
     pages.sort(key=lambda p: (p["order"], p["source"]))
 
@@ -327,6 +440,8 @@ def parse_all_help(limit: int | None = None, lang: str | None = None,
     print(f"\n✅ Извлечено {len(pages)} страниц "
           f"({total_chars / 1_000_000:.1f} млн символов)")
     print(f"   из них через wrapped-files: {from_wrapped}")
+    print(f"   терминов-редиректов привязано к статьям: {resolved}")
+    print(f"   терминов без статьи (остались как подсказки): {len(leftover_redirects)}")
     print(f"   пустых/служебных: {empty}, дублей: {duplicates}, ошибок: {errors}")
     print(f"💾 {PAGES_FILE}")
     print(f"💾 {OUTPUT_FILE}")
@@ -416,8 +531,26 @@ def main() -> None:
                     help="свой корень справки (можно несколько раз)")
     args = ap.parse_args()
 
-    roots = [Path(p) for p in args.root] if args.root else None
-    parse_all_help(limit=args.limit, lang=args.lang, roots=roots)
+    # весь вывод дублируем в output\logs\parse_help.log — если окно закроется,
+    # батник покажет хвост лога, а файл можно прислать в чат
+    from src.applog import log_error_to_file, start_log
+
+    log_file = start_log("parse_help")
+    print(f"Лог этого запуска: {log_file}\n")
+    try:
+        roots = [Path(p) for p in args.root] if args.root else None
+        pages = parse_all_help(limit=args.limit, lang=args.lang, roots=roots)
+        if not pages:
+            print("\n(!) Не извлечено ни одной страницы — смотри сообщения выше.")
+            print("    Диагностика структуры: scripts\\dump_help_samples.bat")
+            raise SystemExit(2)
+        print("\n[OK] Разбор завершён успешно.")
+    except SystemExit:
+        raise
+    except Exception:  # noqa: BLE001
+        print("\n(!) Ошибка при разборе справки:")
+        log_error_to_file()
+        raise SystemExit(3)
 
 
 if __name__ == "__main__":

@@ -1,27 +1,23 @@
 @echo off
 chcp 65001 >nul
-title PowerMill AI - режимы резания (S, F, ap, ae)
+title PowerMill AI - режимы резания
+setlocal
 cd /d "%~dp0"
 
 echo =========================================================
-echo   РЕЖИМЫ РЕЗАНИЯ  —  расчёт по формулам, без ИИ
+echo   РЕЖИМЫ РЕЗАНИЯ - расчёт по формулам, без ИИ
 echo   S (об/мин), F (мм/мин), ap, ae, мощность, стратегия
 echo =========================================================
 echo.
 
-if exist "venv\Scripts\python.exe" (
-    call venv\Scripts\activate
-) else (
-    echo [!] Виртуального окружения нет - работаю системным Python.
-    echo     Если чего-то не хватает - запусти setup_light.bat (1 минута)
-    echo.
-)
+set "PY=python"
+if exist "venv\Scripts\python.exe" set "PY=venv\Scripts\python.exe"
+if exist "venv\Scripts\python.exe" goto run
+echo [!] Виртуального окружения нет - работаю системным Python.
+echo.
+:run
 
-if not "%~1"=="" (
-    python -m src.cutting %*
-) else (
-    python -m src.cutting
-)
-
+"%PY%" -m src.cutting %*
 echo.
 pause
+exit /b 0

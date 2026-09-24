@@ -186,3 +186,29 @@ def test_retriever_survives_broken_store(parsed_pages):
     retriever = HybridRetriever(Broken(), hs, verbose=False)
     hits = retriever.search("чистовая обработка", top_k=3)
     assert hits  # FTS вытянул результат без векторов
+
+
+def test_help_search_finds_page_by_alias_term(parsed_pages):
+    """Поиск по термину из contexthelp находит настоящую статью."""
+    hs = HelpSearch()
+    hs.ensure_index()
+    hits = hs.search("Обработка по кривой", top_k=3)
+    assert hits
+    assert any("Чистовая обработка по кривой" in (h["breadcrumb"] or h["title"]) for h in hits)
+
+
+def test_help_search_finds_page_by_contextid(parsed_pages):
+    hs = HelpSearch()
+    hs.ensure_index()
+    hits = hs.search("SWARFFINISHING", top_k=3)
+    assert hits
+    assert hits[0]["source"].endswith("GUID-0001.htm")
+
+
+def test_chunk_header_includes_aliases_and_contextid(parsed_pages):
+    page = next(p for p in parsed_pages if p["title"] == "Чистовая обработка по кривой")
+    chunks = chunk_help_page(page)
+    assert chunks
+    header = chunks[0]["text"].splitlines()[0]
+    assert "также: Обработка по кривой" in header
+    assert "contextid: SWARFFINISHING" in header
