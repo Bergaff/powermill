@@ -37,13 +37,15 @@ echo     17  -  Обновить программу из Git (git pull)
 echo     18  -  Быстрая установка       (разбор+поиск, 1 минута)
 echo     19  -  Логи последних запусков (если что-то не сработало)
 echo     20  -  Найти макросы .mac на диске (примеры для генерации PML)
+echo     21  -  Подключить ИИ по API   (умнее, нужен ключ; справка остаётся у тебя)
+echo     22  -  Переключить ИИ: локальный (Ollama) или API
 echo.
 echo      0  -  Выход
 echo.
 echo   Внутри любых экранов слово  «назад»  или  «меню»
 echo   возвращает к этому списку.
 echo.
-set /p choice="   Выбор (0-20): "
+set /p choice="   Выбор (0-22): "
 
 if "%choice%"=="1"  goto chat
 if "%choice%"=="2"  goto search
@@ -65,6 +67,8 @@ if "%choice%"=="17" goto update
 if "%choice%"=="18" goto light
 if "%choice%"=="19" goto logs
 if "%choice%"=="20" goto macros
+if "%choice%"=="21" goto api
+if "%choice%"=="22" goto switchai
 if "%choice%"=="0"  exit /b 0
 if /i "%choice%"=="назад" exit /b 0
 if /i "%choice%"=="меню" goto menu
@@ -140,6 +144,14 @@ goto menu
 
 :light
 call "%~dp0setup_light.bat"
+goto menu
+
+:api
+call "%~dp0scripts\setup_api.bat"
+goto menu
+
+:switchai
+call "%~dp0scripts\switch_ai.bat"
 goto menu
 
 :macros

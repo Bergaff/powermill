@@ -164,7 +164,23 @@ def main() -> None:
         todo("Векторная база пуста",
              "запусти start_reindex_help.bat (или ночью start_night_indexing.bat)")
 
-    line("4. Прочие источники")
+    line("4. ИИ (мозг ассистента)")
+    try:
+        from src import llm as llm_mod
+
+        settings = llm_mod.load_settings()
+        if settings["backend"] == "api":
+            ok(llm_mod.describe_settings(settings))
+            print(f"           адрес: {settings['base_url']}")
+            print("           проверить связь: пункт 21 меню (setup_api.bat)")
+        else:
+            print(f"  [ЛОКАЛЬНО] {llm_mod.describe_settings(settings)}")
+            print("           Облачный ИИ отвечает точнее и быстрее на слабом ПК:")
+            print("           пункт 21 меню — подключить ИИ по API")
+    except Exception as e:  # noqa: BLE001
+        todo(f"Настройки ИИ недоступны: {e}", "проверь src/llm.py")
+
+    line("5. Прочие источники")
     pdfs = sorted((OUTPUT_DIR.parent / "data" / "pdf").glob("*.pdf"))
     macros = sorted((OUTPUT_DIR.parent / "data" / "macros").glob("*.mac"))
     videos = [p for p in (OUTPUT_DIR.parent / "data" / "videos").iterdir()

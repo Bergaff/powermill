@@ -34,7 +34,7 @@ from config import (
     SOURCE_MAX_DISTANCE,
     TOP_K,
 )
-from src import cutting, pml_vocab
+from src import cutting, llm, pml_vocab
 from src.hardware import set_process_priority
 
 os.environ.setdefault("OLLAMA_HOST", OLLAMA_BASE_URL)
@@ -235,6 +235,19 @@ class PowerMillAI:
     # ---------------- LLM ----------------
     def _generate(self, model: str, prompt: str, temperature: float = 0.2,
                   num_predict: int = 2048, num_ctx: int = 4096) -> str:
+        """Один ответ модели: облачный API, если настроен, иначе локальная Ollama.
+
+        Модель выбирается не по имени, а по режиму (src/llm.py):
+        * `backend=api` — идём в OpenAI-совместимый сервис с ключом;
+        * `backend=local` — как раньше, в Ollama.
+        """
+        settings = llm.load_settings()
+        if settings["backend"] == "api":
+            api_model = (settings.get("code_model") if model == LLM_CODE_MODEL
+                         else settings.get("model")) or settings.get("model", "")
+            return llm.chat(prompt, model=api_model, settings=settings,
+                            temperature=temperature, max_tokens=num_predict)
+
         if ollama is None:
             return "❌ Модуль ollama не установлен: pip install ollama"
         try:
@@ -380,6 +393,13 @@ class PowerMillAI:
             lines.append(f"     {h['text'][:180].replace(chr(10), ' ')}...")
             lines.append("")
         return "\n".join(lines)
+
+    def ai_line(self) -> str:
+        """Строка «какой ИИ используется» для статуса и отчётов."""
+        try:
+            return llm.describe_settings()
+        except Exception:  # noqa: BLE001
+            return "ИИ: не удалось прочитать настройки"
 
     def stats(self) -> str:
         """Что сейчас в базе знаний."""
@@ -562,6 +582,13 @@ def run_chat() -> None:
     ai = PowerMillAI()
     print("\n" + "=" * 60)
     print(" 🤖 PowerMill AI Assistant готов к работе!")
+    try:
+        from src import llm as _llm
+
+        print(f" 🧠 {_llm.describe_settings()}")
+        print("    (сменить ИИ: пункт 22 меню — локальный или API)")
+    except Exception:  # noqa: BLE001
+        pass
     print("=" * 60)
     print(HELP_TEXT)
 
