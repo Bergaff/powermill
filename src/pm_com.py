@@ -284,8 +284,16 @@ class LiveSession:
             if method is None:
                 continue
             try:
-                method(command)
-                return True, f"{method_name}('{command}') -> OK"
+                # DoCommand/Execute возвращает ответ PowerMill (текст команды или
+                # сообщение об ошибке) — он нам нужен для отчётов пункта 33
+                result = method(command)
+                answer = str(result).strip() if result is not None else ""
+                note = f"{method_name}('{command}') -> OK"
+                if answer and answer != command:
+                    note += f" | ответ: {answer[:300]}"
+                if tried:                      # видно, какой способ ругнулся первым
+                    note += " | ранее: " + "; ".join(tried)[:300]
+                return True, note
             except Exception as error:  # noqa: BLE001
                 tried.append(f"{method_name}: {type(error).__name__}: {error}")
         if tried:

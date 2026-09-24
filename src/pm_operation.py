@@ -85,6 +85,18 @@ DEFAULT_TEMPLATE = "3D-Area-Clearance/Model-Area-Clearance.003.ptf"
 # поэтому перебираем и проверяем результат по числу инструментов в проекте.
 END_MILL_WORDS: tuple[str, ...] = ("END_MILL", "ENDMILL", "END MILL")
 
+
+def tool_words() -> list[str]:
+    """Слова для `CREATE TOOL`, начиная с того, что уже сработало (пункт 33).
+
+    Порядок важен: макрос останавливается на первой неверной команде, поэтому
+    сначала подставляем проверенное на твоём PowerMill слово (его записал
+    пункт 33 в output\\pm_tool_word.txt), а потом уже варианты из справки.
+    """
+    from src.pm_tool import word_order
+
+    return word_order(END_MILL_WORDS)
+
 STEP_MARK = "STEP;"
 
 
@@ -152,7 +164,7 @@ def build_macro(plan: OperationPlan, result_file: Path | str = RESULT_FILE,
             "FILE WRITE $pm_step1 TO out",
             "PRINT $pm_step1",
         ]
-        for index, word in enumerate(END_MILL_WORDS):
+        for index, word in enumerate(tool_words()):
             lines += [
                 f"IF SIZE(folder('Tool')) == $pm_tools0 {{",
                 f"    CREATE TOOL ; {word}",
@@ -306,7 +318,7 @@ def preview(plan: OperationPlan) -> list[str]:
     if plan.create_tool:
         lines.append(f"     создать фрезу D{_num(plan.tool_diameter)} "
                      f"(номер {plan.tool_number}), имя «{plan.tool_name}»")
-        lines.append("     слова перебираются: " + ", ".join(END_MILL_WORDS)
+        lines.append("     слова перебираются: " + ", ".join(tool_words())
                      + " — сработавший попадёт в отчёт")
     else:
         lines.append(f"     взять из проекта: «{plan.tool_name}»")
