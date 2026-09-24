@@ -618,6 +618,17 @@ def parse_all_help(limit: int | None = None, lang: str | None = None,
 
     pages.sort(key=lambda p: (p["order"], p["source"]))
 
+    # настоящие макросы с диска (data\macros): примеры рабочего PML для /macro
+    try:
+        from src.macro_index import collect as collect_macros
+
+        macro_pages = collect_macros()
+        if macro_pages:
+            pages.extend(macro_pages)
+            print(f"🧩 Макросов с диска добавлено: {len(macro_pages)}")
+    except Exception as e:  # noqa: BLE001
+        print(f"(!) Макросы не добавились: {e}")
+
     PAGES_FILE.write_text(
         "\n".join(json.dumps(p, ensure_ascii=False) for p in pages), encoding="utf-8"
     )
@@ -680,6 +691,17 @@ def parse_all_help(limit: int | None = None, lang: str | None = None,
         )
     except OSError:
         pass
+
+    # словарь настоящих имён PML — чтобы макросы генерировались по документации
+    try:
+        from src.pml_vocab import build_vocabulary, save_vocabulary
+
+        vocab = build_vocabulary(pages)
+        save_vocabulary(vocab)
+        print(f"🧾 Словарь PML: типов объектов {len(vocab['entities'])}, "
+              f"имён параметров {len(vocab['parameters'])}")
+    except Exception as e:  # noqa: BLE001 — словарь не важнее самого разбора
+        print(f"(!) Словарь PML не собрался: {e}")
 
     if limit and limit > 0:
         print()

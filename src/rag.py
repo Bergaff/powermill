@@ -34,7 +34,7 @@ from config import (
     SOURCE_MAX_DISTANCE,
     TOP_K,
 )
-from src import cutting
+from src import cutting, pml_vocab
 from src.hardware import set_process_priority
 
 os.environ.setdefault("OLLAMA_HOST", OLLAMA_BASE_URL)
@@ -68,21 +68,30 @@ SYSTEM_PROMPT_MACRO = """Ты — эксперт по макроязыку PML (
 Синтаксис PML (соблюдай строго, это НЕ Python и НЕ C):
 - Макрос начинается с комментариев: // описание
 - Переменные: $var = "text"   $n = 12   $n = $n + 1
-- Условия:   IF $var == "x" { ... } ELSE { ... }
-- Циклы:     FOREACH $e IN $entities { ... }   WHILE $n < 10 { ... }
-- Объекты:   ENTITY $e   FOREACH $p IN FOLDER("Model") { ... }
-- Команды PowerMill по имени: Create Boundary; Activate Toolpath "x";  (строки-команды)
+- Условия:   IF $var == "x" { ... } ELSE { ... } ENDIF
+- Циклы:     FOREACH $e IN $entities { ... }   WHILE $n < 10 { ... } ENDWHILE
+- Объекты:   ENTITY $e   FOREACH $tp IN FOLDER("Toolpath") { ... }
+- Команды PowerMill — ТОЛЬКО ЗАГЛАВНЫМИ буквами: CREATE BOUNDARY ;
+  ACTIVATE TOOLPATH $tp.name   EDIT TOOLPATH $tp.name ; REORDER
+- PML различает регистр: «Create Boundary» и «Create» — ошибка, нужно
+  CREATE BOUNDARY.
 - Комментарии: // текст
-- Ошибки в макросе PowerMill: "macros are case sensitive" — соблюдай регистр команд.
 
-Требования к ответу:
-1. Только код PML + короткие комментарии на русском ВНУТРИ кода.
-2. Если опирался не на документацию, а на общее знание — первой строкой:
-   // ВНИМАНИЕ: сгенерировано без опоры на документацию, проверь синтаксис
-3. Никаких пояснений после кода, кроме 1–2 строк заметок в конце (// NOTE: ...).
+ЖЁСТКИЕ ПРАВИЛА (важнее красоты кода):
+1. Типы объектов и параметры бери ТОЛЬКО из блока «ПРОВЕРЕННЫЕ ИМЕНА» ниже.
+2. Если для задачи нужна команда или объект, которых нет в проверенных именах —
+   НЕ ВЫДУМЫВАЙ. Вместо строки оставь комментарий:
+   // НЕ НАЙДЕНО В ДОКУМЕНТАЦИИ: <что нужно сделать>
+   и продолжай с того места, где уверен.
+3. Не добавляй пояснения после кода, кроме 1–2 строк заметок // NOTE: ...
+4. Если задача совсем не покрыта документацией — напиши это первой строкой
+   комментария и дай только каркас с комментариями вместо команд.
 
-Полезные фрагменты из базы знаний:
+Фрагменты документации PowerMill:
 {context}
+
+ПРОВЕРЕННЫЕ ИМЕНА (из разобранной документации PowerMill):
+{vocabulary}
 """
 
 SYSTEM_PROMPT_ERROR = """Ты — наладчик/технолог, разбираешь ошибки PowerMill.
@@ -107,39 +116,47 @@ SYSTEM_PROMPT_COMPARE = """Ты — инженер-технолог PowerMill. �
 
 | Критерий | <Объект A> | <Объект B> |
 |---|---|---|
+| Что это | | |
 | Назначение | | |
 | Когда применять | | |
-| Ключевые параметры | | |
-| Ограничения | | |
-| Типовая стратегия-сосед | | |
+| Ключевые параметры (имена из документации) | | |
+| Ограничения и риски | | |
+| Близкая стратегия | | |
 
-После таблицы — 2–4 строки «Практический вывод»: что выбрать в каких случаях.
-Опирайся ТОЛЬКО на контекст ниже. Если данных по какому-то объекту нет —
-поставь в ячейке «нет данных в документации» и Ничего не придумывай.
+ТРЕБОВАНИЯ:
+1. Объект A описывается ТОЛЬКО по фрагментам блока «=== A ===», объект B —
+   ТОЛЬКО по блокам «=== B ===». Не смешивай их.
+2. В каждой ячейке указывай номер источника, например: «обработка стенок [2]».
+3. «Ключевые параметры» — реальные имена из документации (Thickness, LeadAngle,
+   SwarfBasePosition и т. п.). Если имён нет — напиши «в документации не найдено».
+4. Ничего не придумывай. Лучше пустая ячейка, чем выдумка.
+5. После таблицы 2–4 строки «Практический вывод»: что выбрать в каких случаях.
 
 Контекст:
 {context}
 """
 
-
 # --------------------------------------------------------------------------
 # Вспомогательные функции
 # --------------------------------------------------------------------------
-def _render(prompt: str, context: str) -> str:
-    """Подставляет контекст в промпт.
+def _render(prompt: str, context: str, **extra: str) -> str:
+    """Подставляет контекст (и доп. блоки) в промпт.
 
     Через str.replace, а не str.format: в промпте про PML есть фигурные скобки
     синтаксиса (`IF $x == "y" { ... }`), и format() на них падает.
     """
-    return prompt.replace("{context}", context)
+    out = prompt.replace("{context}", context)
+    for key, value in extra.items():
+        out = out.replace("{" + key + "}", value)
+    return out
 
 
-def _format_hits(hits: list[dict], numbered: bool = True) -> str:
+def _format_hits(hits: list[dict], numbered: bool = True, start: int = 1) -> str:
     """Склеивает фрагменты в контекст для промпта (с нумерацией для ссылок)."""
     if not hits:
         return "(пусто — релевантных фрагментов не найдено)"
     parts: list[str] = []
-    for i, h in enumerate(hits, 1):
+    for i, h in enumerate(hits, start):
         head = h.get("breadcrumb") or h.get("title") or h.get("source", "?")
         mark = f"[{i}] " if numbered else ""
         found = h.get("found_by", "")
@@ -251,14 +268,40 @@ class PowerMillAI:
         return f"{answer}\n\n{_format_sources(hits)}"
 
     def macro(self, task: str, save: bool = True) -> str:
-        """Генерация PML-макроса + сохранение в output/macros."""
-        hits = self._retrieve(task, top_k=max(TOP_K, 5))
-        prompt = _render(SYSTEM_PROMPT_MACRO, _format_hits(hits))
+        """Генерация PML-макроса: с проверенными именами и проверкой результата.
+
+        Модель не должна выдумывать команды, которых нет в PML. Поэтому:
+        1) в промпт кладём словарь настоящих типов объектов и параметров,
+           собранный из разобранной документации (src/pml_vocab.py);
+        2) готовый макрос проверяем по этому же словарю и показываем технологу
+           конкретные подозрительные строки.
+        """
+        vocab = pml_vocab.load_vocabulary()
+        hits = self._retrieve(f"{task} PML макрос PowerMill", top_k=max(TOP_K, 6))
+
+        entities = pml_vocab.relevant_entities(task, vocab, limit=25)
+        params = pml_vocab.relevant_parameters(task, hits, vocab, limit=40)
+        vocabulary = (
+            "Типы объектов (пишутся после CREATE/DELETE/EDIT/ACTIVATE):\n  "
+            + ", ".join(entities)
+            + "\n\nИмена параметров (встречаются в этой задаче):\n  "
+            + (", ".join(params) if params else "(в документации не найдено)")
+        )
+        if not vocab.get("entities"):
+            vocabulary += ("\n\n(!) Словарь PML пуст — справка ещё не разобрана. "
+                           "Разбери справку (пункт 4 меню), и макросы станут точнее.")
+
+        prompt = _render(SYSTEM_PROMPT_MACRO, _format_hits(hits),
+                         vocabulary=vocabulary)
         code = self._generate(LLM_CODE_MODEL,
-                              f"{prompt}\n\nЗадача: {task}\n\nКод PML:", temperature=0.3)
+                              f"{prompt}\n\nЗадача: {task}\n\nКод PML:",
+                              temperature=0.2)
+
+        report = pml_vocab.validate(code, vocab)
         out = f"⚙️ PML-макрос по задаче: {task}\n\n{code}"
+        out += f"\n\n{pml_vocab.format_check(report)}"
         if save:
-            path = save_macro(code, task)
+            path = save_macro(code, task, check=report)
             if path:
                 out += f"\n\n💾 Сохранён файл: {path}"
         out += f"\n\n{_format_sources(hits)}"
@@ -294,12 +337,28 @@ class PowerMillAI:
                 continue
             seen.add(key)
             hits.append(h)
-        prompt = _render(SYSTEM_PROMPT_COMPARE, _format_hits(hits))
+
+        # Контекст даём ДВУМЯ блоками: модель не должна смешивать объекты A и B.
+        context = (
+            f"=== A: {left} ===\n"
+            + _format_hits(hits_left)
+            + f"\n\n=== B: {right} ===\n"
+            + _format_hits(hits_right, start=len(hits_left) + 1)
+        )
+        prompt = _render(SYSTEM_PROMPT_COMPARE, context)
         answer = self._generate(
             LLM_MODEL,
             f"{prompt}\n\nСравни «{left}» и «{right}».\n\nОтвет:",
         )
-        return f"{answer}\n\n{_format_sources(hits)}"
+
+        out = answer
+        # Если документация нашлась, а модель всё равно пишет «нет данных» —
+        # показываем технологу сами фрагменты, чтобы он решил сам.
+        low = answer.lower()
+        empty_cells = low.count("не найдено") + low.count("нет данных") + low.count("n/a")
+        if empty_cells >= 3 and (hits_left or hits_right):
+            out += "\n\n" + _fallback_facts(left, hits_left, right, hits_right)
+        return f"{out}\n\n{_format_sources(hits)}"
 
     def sources(self, query: str, top_k: int = 6) -> str:
         """Отладка поиска: сырые попадания."""
@@ -344,8 +403,39 @@ class PowerMillAI:
 # --------------------------------------------------------------------------
 # Сохранение макросов
 # --------------------------------------------------------------------------
-def save_macro(text: str, task: str) -> Path | None:
-    """Вытаскивает код из ответа LLM и сохраняет в выходную папку."""
+def _fallback_facts(left: str, hits_left: list[dict],
+                    right: str, hits_right: list[dict]) -> str:
+    """Показывает сырые фрагменты по обеим сторонам, если модель сдалась.
+
+    Иногда документация есть, но модель пишет «нет данных». Тогда технологу
+    полезнее увидеть сами выдержки, чем пустую таблицу.
+    """
+    lines = ["📄 Что нашлось в документации (сырые выдержки):"]
+
+    def side(name: str, hits: list[dict]) -> None:
+        lines.append(f"\n  {name}:")
+        if not hits:
+            lines.append("    — в базе ничего не найдено, попробуй другое слово")
+            return
+        for hit in hits[:3]:
+            crumb = hit.get("breadcrumb") or hit.get("title") or hit.get("source", "?")
+            text = re.sub(r"\s+", " ", hit.get("text", "")).strip()
+            lines.append(f"    • {crumb}")
+            lines.append(f"      {text[:220]}…")
+            lines.append(f"      {hit.get('source', '?')}")
+
+    side(left, hits_left)
+    side(right, hits_right)
+    lines.append("\n  Полный текст: пункт 2 меню (поиск по справке), потом цифра статьи.")
+    return "\n".join(lines)
+
+
+def save_macro(text: str, task: str, check: dict | None = None) -> Path | None:
+    """Вытаскивает код из ответа LLM и сохраняет в выходную папку.
+
+    Если передана проверка (src/pml_vocab.validate) — первой строкой файла
+    пишем её итог, чтобы технолог видел риск прямо в макросе.
+    """
     try:
         from config import OUTPUT_DIR
 
@@ -355,8 +445,23 @@ def save_macro(text: str, task: str) -> Path | None:
         if not code.strip():
             return None
         slug = re.sub(r"[^0-9a-zA-Zа-яА-ЯёЁ]+", "_", task.strip())[:40].strip("_") or "macro"
+
+        header = [f"// Задача: {task}",
+                  f"// Создано: PowerMill AI, {time.strftime('%Y-%m-%d %H:%M')}"]
+        if check is not None:
+            if check.get("ok"):
+                header.append("// Проверка по документации: подозрительных строк нет")
+            else:
+                suspects = (check.get("not_commands", []) + check.get("unknown_types", [])
+                            + check.get("case_errors", []) + check.get("bad_arity", []))
+                numbers = ", ".join(str(n) for n, _line in suspects[:10])
+                header.append("// ВНИМАНИЕ: проверь строки " + numbers
+                              + " — они не найдены в документации PowerMill")
+                header.append("// Подробности: пункт 2 меню (поиск по справке)")
+        header.append("")
+
         path = folder / f"{time.strftime('%Y%m%d_%H%M%S')}_{slug}.mac"
-        path.write_text(code, encoding="utf-8")
+        path.write_text("\n".join(header) + code, encoding="utf-8")
         return path
     except Exception:  # noqa: BLE001 — сохранение не должно ломать ответ
         return None
