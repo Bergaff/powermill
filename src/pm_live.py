@@ -135,20 +135,20 @@ def connect_dotnet(assembly: str | None = None) -> tuple[object | None, str]:
 
 
 def connect_com(progids: tuple[str, ...] = COM_PROGIDS) -> tuple[object | None, str]:
-    """Попытка подключиться к PowerMill как к COM-серверу (pywin32)."""
-    try:
-        import win32com.client
-    except Exception as error:  # noqa: BLE001
-        return None, f"pywin32 не установлен ({error}). Установка: pip install pywin32"
+    """Подключение к PowerMill как к COM-серверу (pywin32).
 
-    tried: list[str] = []
-    for progid in progids:
-        try:
-            app = win32com.client.Dispatch(progid)
-            return app, f"подключено через COM: {progid}"
-        except Exception as error:  # noqa: BLE001
-            tried.append(f"{progid}: {type(error).__name__}")
-    return None, "COM-класс не найден. Проверено: " + "; ".join(tried)
+    Сначала пробуем **присоединиться** к уже запущенному PowerMill
+    (`GetActiveObject`) — `Dispatch` в такой ситуации открывает вторую копию
+    программы, а это технологу не нужно. Если PowerMill не запущен, честно
+    говорим об этом: запускать его за пользователя мы не будем.
+    """
+    from src import pm_com
+
+    app, message = pm_com.attach(progids)
+    if app is not None:
+        return app, message
+
+    return None, message
 
 
 def connect() -> tuple[object | None, str, str]:

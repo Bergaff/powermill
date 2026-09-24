@@ -189,8 +189,21 @@ def run(verbose: bool = True) -> int:
         return 2
 
     if running is False:
-        report.append("(!) PowerMill не запущен. Запусти его с проектом и повтори —")
-        report.append("    иначе COM-сервер стартует пустым, без проекта.")
+        report.append("(!) PowerMill не запущен. Запусти его с проектом и повтори.")
+        report.append("    Сами мы его не запускаем: в прошлый раз обычный")
+        report.append("    win32com.Dispatch открывал вторую копию PowerMill.")
+        text = "\n".join(report) + "\n" + "\n".join(
+            ["", "=" * 62,
+             "  ЧТО ДЕЛАТЬ",
+             "=" * 62, "",
+             "1. Открой PowerMill и нужный проект.",
+             "2. Запусти пункт 27 меню снова — разведка покажет живой API.",
+             "",
+             "Мост Python уже стоит, заново ничего не устанавливается."])
+        if verbose:
+            print(text)
+        _save(text)
+        return 3
 
     api, strategy, message = pm_live.connect()
     report.append(f"Подключение: {strategy} — {message}")

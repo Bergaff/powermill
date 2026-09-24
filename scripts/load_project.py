@@ -78,6 +78,12 @@ def main() -> int:
     from src.pm_macro import PROJECT_FILE
 
     auto = "--auto" in sys.argv
+
+    # 1) живое чтение из уже запущенного PowerMill (по разведке пункта 27)
+    live_rc = load_from_live(log)
+    if live_rc is not None:
+        return live_rc
+
     if auto:
         return load_from_macro(log)
 
@@ -128,6 +134,33 @@ def main() -> int:
     print("  /macro — макросы с настоящими именами")
     print("  /project — показать снимок и проверки")
     print("  /pm — попробовать живое подключение к PowerMill (шаг 2.1)")
+    return 0
+
+
+def load_from_live(log) -> int | None:
+    """Снимок прямо из запущенного PowerMill. None — если подключиться нельзя."""
+    from src import pm_com
+
+    print("Пробую прочитать проект из запущенного PowerMill (живое API)...")
+    context, message = pm_com.refresh_context()
+    print(f"  {message}")
+
+    if context is None:
+        return None                      # не запущен / нет моста — идём дальше
+    if not context.get("_total"):
+        print("  Проект пуст или не открыт — жду открытия.")
+        return None
+
+    saved = project_context.CONTEXT_FILE
+    checks = project_context.format_checks(context)
+    if checks:
+        print()
+        print(checks)
+    print()
+    print("Готово — прочитано напрямую, без макросов и блокнота.")
+    print(f"💾 Сохранено: {saved}")
+    print()
+    print("Теперь ассистент знает твои имена: /project, /macro, /ask")
     return 0
 
 

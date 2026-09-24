@@ -142,7 +142,9 @@ def test_run_reports_when_powermill_not_running(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert rc == 3
     assert "не запущен" in out
-    assert "проект открыт" in out
+    # запускать PowerMill за технолога мы не должны (раньше Dispatch открывал копию)
+    assert "не запускаем" in out
+    assert (tmp_path / "probe.txt").exists()
 
 
 def test_run_saves_report_with_connected_api(tmp_path, monkeypatch, capsys):

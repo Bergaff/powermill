@@ -410,17 +410,32 @@ class PowerMillAI:
         return "\n".join(lines)
 
     def project(self) -> str:
-        """Что известно о проекте технолога + проверки по нему."""
-        context = project_context.load()
+        """Что известно о проекте технолога + проверки по нему.
+
+        Если PowerMill запущен — снимок обновляется прямо сейчас, из живого API
+        (пункт 27): никаких макросов и блокнота.
+        """
+        from src import pm_com
+
+        context, message = pm_com.refresh_context()
+        note = ""
+        if context and context.get("_total"):
+            note = ("🔄 Снимок обновлён из живого PowerMill: "
+                    + message.splitlines()[0].strip())
+        else:
+            context = project_context.load()
+
         if not context:
             return ("Снимок проекта пока не загружен, поэтому макросы пишутся "
                     "с абстрактными именами.\n\n"
                     "Как загрузить (30 секунд):\n"
-                    "  1) пункт 23 меню — создаст макрос разведки "
-                    "output\\PM_PROBE.mac;\n"
-                    "  2) запусти его в PowerMill (вкладка «Макрос» -> Выполнить);\n"
-                    "  3) пункт 24 меню — вставь вывод в блокнот, сохрани и закрой.")
+                    "  1) открой PowerMill с проектом;\n"
+                    "  2) пункт 24 меню — прочитает проект напрямую;\n"
+                    "     (если PowerMill не запущен — подскажет, что сделать)")
+
         text = project_context.summary(context)
+        if note:
+            text = note + "\n\n" + text
         checks = project_context.format_checks(context)
         if checks:
             text += "\n\n" + checks
@@ -429,19 +444,43 @@ class PowerMillAI:
     def pm_status(self) -> str:
         """Живое подключение к PowerMill (шаг 2.1).
 
-        Без моста — объясняем, что сделать (пункт 27). С мостом — сразу делаем
-        разведку API и сохраняем отчёт для отправки в чат.
+        Порядок: если PowerMill запущен — присоединяемся и читаем проект живым
+        API. Если нет — объясняем, что сделать, и показываем разведку.
         """
-        from src import pm_live, pm_probe
+        from src import pm_live, pm_com
 
         if not any(pm_live.bridges().values()):
             return (pm_live.status_report(verbose=False)
                     + "\n\nЧто сделать: пункт 27 меню — поставить мост к PowerMill.\n"
-                      "После этого /pm покажет структуру API и подключится к проекту.")
+                      "После этого /pm читает проект напрямую и показывает объекты.")
+
+        lines = ["=" * 60, "  ЖИВОЙ PowerMill", "=" * 60]
+        lines += ["  " + line for line in pm_com.status_lines()]
+
+        context, message = pm_com.refresh_context()
+        if context and context.get("_total"):
+            lines.append("")
+            lines.append("Снимок проекта обновлён и сохранён "
+                         "(ассистент использует эти имена в /macro и /ask):")
+            lines.append("")
+            lines.append(project_context.summary(context))
+            checks = project_context.format_checks(context)
+            if checks:
+                lines.append("")
+                lines.append(checks)
+            return "\n".join(lines)
+
+        lines.append("")
+        lines.append("Проект прочитать не удалось (PowerMill не запущен или проект "
+                     "не открыт). Делаю разведку, чтобы это было видно в отчёте.")
+        lines.append("")
+        lines.append(f"Отчёт: {__import__('src.pm_probe', fromlist=['x']).PROBE_FILE}")
+        from src import pm_probe
 
         pm_probe.run(verbose=True)
-        return (f"Отчёт разведки сохранён: {pm_probe.PROBE_FILE}\n"
-                f"Пришли его в чат — по нему будет точное подключение к проекту.")
+        lines.append("")
+        lines.append(f"Открыть отчёт: пункт 29 меню. Файл: {pm_probe.PROBE_FILE}")
+        return "\n".join(lines)
 
     def ai_line(self) -> str:
         """Строка «какой ИИ используется» для статуса и отчётов."""
