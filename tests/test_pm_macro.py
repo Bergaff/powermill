@@ -107,9 +107,41 @@ def test_launchers_include_test_bat(tmp_path, monkeypatch):
     assert "POWERMILL-AI-OK" in launchers["pm_test.bat"]
 
 
-def test_macros_use_double_backslash_paths():
-    code = pm_macro.ask_macro()
-    assert "\\\\" in code or "/" in code        # путь в стиле Windows
+def test_windows_paths_are_not_doubled(monkeypatch):
+    """Пути на Windows попадают в макрос как E:\powermill-ai\output.
+
+    Удвоение слэшей (E:\\powermill-ai) — ошибка: в PML обратный слэш не
+    экранирует, это видно по принятым решениям Autodesk
+    ('C:\Program Files\...\Rhino.exe', "C:\temp\macropaths").
+    """
+    win = r"E:\powermill-ai\output"
+    monkeypatch.setattr(pm_macro, "OUTPUT_DIR", Path(win))
+    monkeypatch.setattr(pm_macro, "REQUEST_FILE", Path(win + r"\pm_request.txt"))
+    monkeypatch.setattr(pm_macro, "ANSWER_FILE", Path(win + r"\pm_answer.txt"))
+    monkeypatch.setattr(pm_macro, "PROJECT_FILE", Path(win + r"\pm_project.txt"))
+    monkeypatch.setattr(pm_macro, "TEST_FILE", Path(win + r"\pm_test.txt"))
+
+    for code in (pm_macro.ask_macro(), pm_macro.snapshot_macro(),
+                 pm_macro.test_macro()):
+        assert "\\\\" not in code, "в макросе удвоенные обратные слэши"
+        assert "E:" in code
+
+
+def test_forward_slashes_are_normalized_for_windows_paths():
+    """Если путь пришёл как E:/powermill-ai, в макросе он станет E:\\powermill-ai."""
+    assert pm_macro._win_path(Path("E:/powermill-ai/output")) == "E:\\powermill-ai\\output"
+    assert pm_macro._win_path(Path("/tmp/pmtest/data")) == "/tmp/pmtest/data"
+
+
+def test_launcher_uses_windows_path_for_data_root(monkeypatch):
+    monkeypatch.setattr(pm_macro, "DATA_ROOT", "E:/powermill-ai")
+    text = pm_macro.launchers()["pm_test.bat"]
+    assert 'cd /d "E:\\powermill-ai"' in text
+
+
+def test_paths_inside_macros_use_single_quotes():
+    """Путь в макросе — в одинарных кавычках, как в примерах Autodesk."""
+    assert "STRING $f = '" in pm_macro.test_macro()
 
 
 # --------------------------------------------------------------------------

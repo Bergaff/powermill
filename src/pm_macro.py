@@ -46,17 +46,31 @@ MODES = (
 )
 
 
-def _pml_path(path: Path) -> str:
-    """Путь для PML: обратные слэши, одинарные кавычки в строках PML."""
-    return str(path).replace("\\", "\\\\")
+def _win_path(path) -> str:
+    """Путь в стиле Windows: разделители — обратные слэши.
+
+    Зачем: пути попадают и в PML-макрос, и в .bat. На Windows Path сам даёт
+    `\`, но если путь пришёл из настроек с `/` (или мы собираем его в другом
+    окружении), получается смесь `E:\powermill-ai\output/pm_test.txt`. cmd её
+    терпит, но PML-строка должна быть обычным windows-путём — поэтому
+    нормализуем.
+
+    Обратные слэши НЕ удваиваем: в PML `\` внутри строки — обычный символ, так
+    пишут и в принятых решениях на форуме Autodesk:
+    `OLE FILEACTION 'OPEN' 'C:\Program Files\...\Rhino.exe'`,
+    `STRING path_file = "C:\temp\macropaths"`.
+    """
+    text = str(path)
+    looks_windows = (len(text) > 1 and text[1] == ":") or "\\" in text
+    return text.replace("/", "\\") if looks_windows else text
 
 
 def ask_macro() -> str:
     """Макрос-пульт: спросить ассистента, не выходя из PowerMill."""
     modes_list = ", ".join(f'"{title}"' for _code, title in MODES)
-    request = _pml_path(REQUEST_FILE)
-    answer = _pml_path(ANSWER_FILE)
-    launcher = _pml_path(OUTPUT_DIR / "pm_answer.bat")
+    request = _win_path(REQUEST_FILE)
+    answer = _win_path(ANSWER_FILE)
+    launcher = _win_path(OUTPUT_DIR / "pm_answer.bat")
 
     return f"""// ============================================================
 //  PowerMill AI — ассистент внутри PowerMill
@@ -105,8 +119,8 @@ MESSAGE INFO $text
 
 def snapshot_macro() -> str:
     """Макрос-снимок: собрать данные проекта в файл и отдать ассистенту."""
-    project = _pml_path(PROJECT_FILE)
-    launcher = _pml_path(OUTPUT_DIR / "pm_snapshot.bat")
+    project = _win_path(PROJECT_FILE)
+    launcher = _win_path(OUTPUT_DIR / "pm_snapshot.bat")
 
     return f"""// ============================================================
 //  PowerMill AI — снимок проекта
@@ -172,8 +186,8 @@ def test_macro() -> str:
     макрос читает файл и сравнивает. Если текст не изменился — программа не
     запустилась. Никаких проверок существования файла, которых нет в PML.
     """
-    test_file = _pml_path(TEST_FILE)
-    launcher = _pml_path(OUTPUT_DIR / "pm_test.bat")
+    test_file = _win_path(TEST_FILE)
+    launcher = _win_path(OUTPUT_DIR / "pm_test.bat")
 
     return f"""// ============================================================
 //  PowerMill AI — самопроверка моста (запусти этот макрос первым)
@@ -234,34 +248,34 @@ def launchers() -> dict[str, str]:
         "pm_test.bat": f"""@echo off
 chcp 65001 >nul
 title ТЕСТ МОСТА — PowerMill видит внешнюю программу
-cd /d "{DATA_ROOT}"
+cd /d "{_win_path(DATA_ROOT)}"
 echo ТЕСТ МОСТА: окно открылось — значит PowerMill запустил программу.
 echo.
 echo Отвечаю PowerMill и жду кнопку RESUME...
-echo POWERMILL-AI-OK> "{TEST_FILE}"
-echo %DATE% %TIME%>> "{TEST_FILE}"
+echo POWERMILL-AI-OK> "{_win_path(TEST_FILE)}"
+echo %DATE% %TIME%>> "{_win_path(TEST_FILE)}"
 echo.
-echo Ответ записан: {TEST_FILE}
+echo Ответ записан: {_win_path(TEST_FILE)}
 echo Переключись в PowerMill и нажми RESUME.
 pause
 """,
         "pm_answer.bat": f"""@echo off
 chcp 65001 >nul
 title PowerMill AI - ответ на запрос из PowerMill
-cd /d "{DATA_ROOT}"
+cd /d "{_win_path(DATA_ROOT)}"
 set "PY=python"
 if exist ".venv\\Scripts\\python.exe" set "PY=.venv\\Scripts\\python.exe"
 if exist "venv\\Scripts\\python.exe" set "PY=venv\\Scripts\\python.exe"
 "%PY%" -m scripts.pm_answer
 echo.
-echo [ГОТОВО] Ответ записан в {ANSWER_FILE}
+echo [ГОТОВО] Ответ записан в {_win_path(ANSWER_FILE)}
 echo Закрой это окно и нажми RESUME в PowerMill.
 pause
 """,
         "pm_snapshot.bat": f"""@echo off
 chcp 65001 >nul
 title PowerMill AI - снимок проекта из PowerMill
-cd /d "{DATA_ROOT}"
+cd /d "{_win_path(DATA_ROOT)}"
 set "PY=python"
 if exist ".venv\\Scripts\\python.exe" set "PY=.venv\\Scripts\\python.exe"
 if exist "venv\\Scripts\\python.exe" set "PY=venv\\Scripts\\python.exe"
