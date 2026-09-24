@@ -56,12 +56,14 @@ echo.
 echo     33  -  Создать фрезу в проекте PowerMill (и выяснить рабочее слово)
 echo     34  -  Панель «PowerMill AI» на ленте PowerMill (кнопки)
 echo.
+echo     35  -  Проверить траектории (зарезы, столкновения)  (шаг 3.4)
+echo.
 echo      0  -  Выход
 echo.
 echo   Внутри любых экранов слово  «назад»  или  «меню»
 echo   возвращает к этому списку.
 echo.
-set /p choice="   Выбор (0-34): "
+set /p choice="   Выбор (0-36): "
 
 if "%choice%"=="1"  goto chat
 if "%choice%"=="2"  goto search
@@ -97,6 +99,8 @@ if "%choice%"=="31" goto operation
 if "%choice%"=="32" goto webui
 if "%choice%"=="33" goto protool
 if "%choice%"=="34" goto ribbon
+if "%choice%"=="35" goto checks
+if "%choice%"=="36" goto nc
 if "%choice%"=="0"  exit /b 0
 if /i "%choice%"=="назад" exit /b 0
 if /i "%choice%"=="меню" goto menu
@@ -200,6 +204,14 @@ goto menu
 
 :ribbon
 call "%~dp0scripts\make_ribbon.bat"
+goto menu
+
+:checks
+call "%~dp0scripts\check_toolpaths.bat"
+goto menu
+
+:nc
+call "%~dp0scripts\make_nc.bat"
 goto menu
 
 :pmmacros

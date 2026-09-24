@@ -52,6 +52,9 @@ RPM FRATE PRATE RSPEED TPPAGE PAR BLOCK
 TEMPLATE TMPLTSELECTORGUI DIAMETER NUMBER COMMANDFROMUI COORDINATE WORLD
 RESETLIMIT ZMAX SAFEAREA CALCULATE CALCULATE_DIMENSIONS LEADS LEADIN RAMP
 UNDRAW REAPPLYFROMGUI SPIRAL
+COLLISION GOUGE SHANK_CLEARANCE HOLDER_CLEARANCE SPLIT_TOOLPATH ADJUST_TOOL
+APPLY TYPE DEPTH ENTITY_EXISTS
+KEEP TAPEOPTIONS FILENAME ITEM COMPONENT NCSELECTED FIXTUREOFFSET INSERT
 """.split())
 # RPM / FRATE / PRATE / RSPEED / TPPAGE / PAR — слова команды EDIT из рабочего
 # макроса на форуме Autodesk («Macro not using input») и руководства PowerMill:
@@ -62,6 +65,12 @@ UNDRAW REAPPLYFROMGUI SPIRAL
 # DIAMETER/NUMBER/COMMANDFROMUI/COORDINATE/WORLD/RESETLIMIT/ZMAX — слова из тех же
 # рабочих макросов Autodesk (создание инструмента, заготовка, шаблон стратегии,
 # безопасная зона, подводы, расчёт и снятие отрисовки).
+# COLLISION/GOUGE/SHANK_CLEARANCE/HOLDER_CLEARANCE/SPLIT_TOOLPATH/ADJUST_TOOL —
+# проверки PowerMill из рабочего макроса форума Autodesk («Macro to simulate all
+# toolpaths in project»): EDIT COLLISION TYPE GOUGE|COLLISION, EDIT COLLISION APPLY.
+# KEEP/TAPEOPTIONS/FILENAME/ITEM/COMPONENT/NCSELECTED — вывод NC-программы
+# (CREATE NCPROGRAM, EDIT NCPROGRAM ; APPEND TOOLPATH, ACTIVATE NCPROGRAM … KEEP
+# NCPROGRAM ;) — из рабочих макросов «Macro to create NC code».
 # BLOCK — заготовка PowerMill: `EDIT BLOCK RESET`, `EDIT BLOCK RESETLIMIT`,
 # `EDIT BLOCK ZMAX` — из рабочих макросов форума Autodesk.
 
@@ -70,6 +79,11 @@ UNDRAW REAPPLYFROMGUI SPIRAL
 # словами и смотрим, после какого число инструментов в проекте выросло. Такие
 # строки валидатор не считает ошибкой, но и не подтверждает — он кладёт их в
 # отдельный список `tries` (макрос отчитывается о результате сам).
+# `CREATE <тип> <имя>` — синтаксис не для всех объектов, но подтверждён
+# рабочими макросами Autodesk: `CREATE NCPROGRAM $NewName` (тема «Fix macro»),
+# `CREATE NCPROGRAM ${ncName}` и `CREATE PATTERN ;` без имени.
+NAMED_CREATE = frozenset({"ncprogram"})
+
 TRY_WORDS = frozenset({"END_MILL", "ENDMILL", "END"})
 TRY_RE = re.compile(r"\b(" + "|".join(sorted(TRY_WORDS)) + r")\b")
 
@@ -110,6 +124,9 @@ QUOTED_TYPE_CMP_RE = re.compile(
     r"""\b(Type|type)\s*==\s*["']([A-Za-z_]{3,30})["']""")
 STARTER_RE = re.compile(r"^([A-Za-z_]{2,30})\b")
 UPPER_WORD_RE = re.compile(r"\b([A-Z][A-Z_]{2,30})\b")
+# Длинные строковые литералы (тексты сообщений и строки отчёта вида
+# "chk;exists;ok;имя") не должны считаться командами языка.
+STRING_LITERAL_RE = re.compile(r'"[^"]*"')
 HEADING_RE = re.compile(r"(?m)^#{1,3}\s+(.+)$")
 CAMEL_RE = re.compile(r"^[A-Z][A-Za-z0-9_]{2,40}$")
 
@@ -332,11 +349,15 @@ def validate(code: str, vocab: dict | None = None) -> dict:
                     not_commands.append((number, raw))
 
         for match in CREATE_ARGS_RE.finditer(stripped):
+            entity = match.group(2).lower()
             tail = match.group(3).strip()
+            if entity in NAMED_CREATE:
+                continue          # этому типу можно передать имя (см. NAMED_CREATE)
             if tail and not tail.startswith((";", "{", "}")):
                 bad_arity.append((number, raw))
 
-        for word in set(UPPER_WORD_RE.findall(stripped)):
+        without_strings = STRING_LITERAL_RE.sub('""', stripped)
+        for word in set(UPPER_WORD_RE.findall(without_strings)):
             if (word.lower() not in known and word not in KEYWORD_NOISE
                     and not word.startswith("$")):
                 foreign_upper.append((number, raw))
