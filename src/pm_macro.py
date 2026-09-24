@@ -35,6 +35,7 @@ MACRO_DIR = OUTPUT_DIR / "pm_macros"
 REQUEST_FILE = OUTPUT_DIR / "pm_request.txt"
 ANSWER_FILE = OUTPUT_DIR / "pm_answer.txt"
 PROJECT_FILE = OUTPUT_DIR / "pm_project.txt"
+TEST_FILE = OUTPUT_DIR / "pm_test.txt"
 
 # Куда технолог кладёт файл ответа/вопроса (пути внутри макроса)
 MODES = (
@@ -77,7 +78,7 @@ IF $question == '' {{
 // 3. Пишем запрос в файл (его прочитает ассистент)
 STRING $reqfile = '{request}'
 FILE OPEN $reqfile FOR WRITE AS req
-FILE WRITE "MODE=" + $mode TO req
+FILE WRITE "MODE=" + STRING($mode) TO req
 FILE WRITE $question TO req
 FILE CLOSE req
 
@@ -163,9 +164,87 @@ OLE FILEACTION 'OPEN' '{launcher}'
 """
 
 
+def test_macro() -> str:
+    """Самопроверка моста: файлы + запуск программы + пауза.
+
+    Как проверяется запуск программы без догадок: макрос сам пишет файл с
+    текстом-ожиданием, внешний .bat перезаписывает его своим подтверждением, а
+    макрос читает файл и сравнивает. Если текст не изменился — программа не
+    запустилась. Никаких проверок существования файла, которых нет в PML.
+    """
+    test_file = _pml_path(TEST_FILE)
+    launcher = _pml_path(OUTPUT_DIR / "pm_test.bat")
+
+    return f"""// ============================================================
+//  PowerMill AI — самопроверка моста (запусти этот макрос первым)
+//  Проверяет: запись файла, чтение файла, запуск программы, пауза.
+// ============================================================
+
+// --- 1. Пишем файл из PowerMill ---
+STRING $f = '{test_file}'
+FILE OPEN $f FOR WRITE AS out
+FILE WRITE "WAIT" TO out
+FILE CLOSE out
+PRINT "[1/4] Файл записан из PowerMill: " + $f
+
+// --- 2. Читаем его обратно ---
+STRING LIST $lines = {{}}
+FILE OPEN $f FOR READ AS inp
+FILE READ $lines FROM inp
+FILE CLOSE inp
+STRING $text = ""
+FOREACH $l IN $lines {{
+    $text = $text + $l
+}}
+PRINT "[2/4] Файл прочитан обратно, содержимое: " + $text
+
+// --- 3. Запускаем внешнюю программу (наш .bat) ---
+STRING $launcher = '{launcher}'
+OLE FILEACTION 'OPEN' $launcher
+
+// --- 4. Пауза: технолог видит тестовое окно и нажимает RESUME ---
+MACRO PAUSE "Открылось окно 'ТЕСТ МОСТА'? Нажми RESUME."
+
+// --- 5. Читаем файл ещё раз: программа должна была его перезаписать ---
+STRING LIST $after = {{}}
+FILE OPEN $f FOR READ AS inp2
+FILE READ $after FROM inp2
+FILE CLOSE inp2
+STRING $after_text = ""
+FOREACH $l IN $after {{
+    $after_text = $after_text + $l
+}}
+
+PRINT "[3/4] Содержимое после запуска программы: " + $after_text
+
+IF $after_text == $text {{
+    MESSAGE WARN "МОСТ РАБОТАЕТ ЧАСТИЧНО: PowerMill пишет и читает файлы, но внешняя программа не запустилась или не перезаписала файл. Проверь, что pm_test.bat открывается двойным кликом."
+    PRINT "[4/4] Запуск внешней программы: НЕ РАБОТАЕТ"
+    PRINT "Файл-запускатель: " + $launcher
+}} ELSE {{
+    MESSAGE INFO "МОСТ РАБОТАЕТ ПОЛНОСТЬЮ: PowerMill записал файл, прочитал его, запустил внешнюю программу, и она ответила. Теперь можно запускать PM_AI_ASK.mac — ассистент внутри PowerMill."
+    PRINT "[4/4] Запуск внешней программы: РАБОТАЕТ"
+}}
+"""
+
+
 def launchers() -> dict[str, str]:
     """Батники, которые запускает PowerMill (через OLE FILEACTION)."""
     return {
+        "pm_test.bat": f"""@echo off
+chcp 65001 >nul
+title ТЕСТ МОСТА — PowerMill видит внешнюю программу
+cd /d "{DATA_ROOT}"
+echo ТЕСТ МОСТА: окно открылось — значит PowerMill запустил программу.
+echo.
+echo Отвечаю PowerMill и жду кнопку RESUME...
+echo POWERMILL-AI-OK> "{TEST_FILE}"
+echo %DATE% %TIME%>> "{TEST_FILE}"
+echo.
+echo Ответ записан: {TEST_FILE}
+echo Переключись в PowerMill и нажми RESUME.
+pause
+""",
         "pm_answer.bat": f"""@echo off
 chcp 65001 >nul
 title PowerMill AI - ответ на запрос из PowerMill
@@ -201,7 +280,8 @@ def write_all(folder: Path | None = None) -> list[Path]:
     written: list[Path] = []
 
     for name, text in (("PM_AI_ASK.mac", ask_macro()),
-                       ("PM_AI_SNAPSHOT.mac", snapshot_macro())):
+                       ("PM_AI_SNAPSHOT.mac", snapshot_macro()),
+                       ("PM_AI_TEST.mac", test_macro())):
         path = folder / name
         # макросы PowerMill ждут обычные переводы строк
         path.write_bytes(text.replace("\n", "\r\n").encode("utf-8"))

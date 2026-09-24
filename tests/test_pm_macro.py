@@ -81,6 +81,32 @@ def test_macros_have_no_unproven_commands():
             assert fake not in lowered
 
 
+def test_test_macro_checks_launch_by_comparing_content():
+    """Запуск программы проверяется сравнением содержимого файла, а не EXISTS()."""
+    code = pm_macro.test_macro()
+    assert "FILE WRITE \"WAIT\" TO out" in code
+    assert "IF $after_text == $text" in code
+    assert "EXISTS(FILEOPEN" not in code          # такой функции в PML нет
+    assert "OLE FILEACTION 'OPEN' $launcher" in code
+
+
+def test_test_macro_passes_own_validator():
+    report = pml_vocab.validate(pm_macro.test_macro(), VOCAB)
+    assert report["ok"], pml_vocab.format_check(report)
+
+
+def test_ask_macro_converts_mode_number_to_string():
+    """INPUT CHOICE возвращает номер, а в файл нужно писать текст."""
+    assert "STRING($mode)" in pm_macro.ask_macro()
+
+
+def test_launchers_include_test_bat(tmp_path, monkeypatch):
+    monkeypatch.setattr(pm_macro, "OUTPUT_DIR", tmp_path)
+    launchers = pm_macro.launchers()
+    assert "pm_test.bat" in launchers
+    assert "POWERMILL-AI-OK" in launchers["pm_test.bat"]
+
+
 def test_macros_use_double_backslash_paths():
     code = pm_macro.ask_macro()
     assert "\\\\" in code or "/" in code        # путь в стиле Windows

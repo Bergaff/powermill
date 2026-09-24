@@ -3,6 +3,7 @@
 
 Создаёт два макроса и кладёт их туда, где PowerMill их видит:
 
+* PM_AI_TEST.mac     — самопроверка моста: файлы + запуск .bat + пауза;
 * PM_AI_ASK.mac      — меню «что нужно», вопрос и показ ответа в окне PowerMill;
 * PM_AI_SNAPSHOT.mac — снимок проекта (модели, границы, инструменты, траектории).
 
@@ -20,6 +21,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src import pm_macro                        # noqa: E402
 from src.applog import start_log                # noqa: E402
+
+
+MACRO_NAMES = ("PM_AI_TEST.mac", "PM_AI_ASK.mac", "PM_AI_SNAPSHOT.mac")
 
 
 def main() -> int:
@@ -43,7 +47,7 @@ def main() -> int:
     if folders:
         print("Копирую в папки макросов PowerMill:")
         for folder in folders:
-            for name in ("PM_AI_ASK.mac", "PM_AI_SNAPSHOT.mac"):
+            for name in MACRO_NAMES:
                 source = pm_macro.MACRO_DIR / name
                 if not source.exists():
                     continue
@@ -71,7 +75,12 @@ def main() -> int:
     print("  КАК ПОЛЬЗОВАТЬСЯ")
     print("=" * 60)
     print()
-    print("В PowerMill: вкладка «Макрос» -> «Выполнить» -> выбери")
+    print("ШАГ 1 — проверь мост (10 секунд):")
+    print(f"  {pm_macro.MACRO_DIR}\\PM_AI_TEST.mac")
+    print("  Макрос запишет файл, прочитает его и откроет тестовое окно.")
+    print("  Если он показал «МОСТ РАБОТАЕТ ПОЛНОСТЬЮ» — идём дальше.")
+    print()
+    print("ШАГ 2 — сам ассистент. В PowerMill: вкладка «Макрос» -> «Выполнить» ->")
     print(f"  {pm_macro.MACRO_DIR}\\PM_AI_ASK.mac")
     print()
     print("  • появится меню: справка / макрос / ошибка / режимы резания;")

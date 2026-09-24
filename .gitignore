@@ -29,3 +29,6 @@ chroma_db/
 api_key.json
 *api_key*.json
 config_local.py
+
+# Артефакты запусков: литеральные пути диска Windows не должны попадать в Git
+/E:/
