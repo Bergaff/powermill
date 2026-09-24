@@ -30,6 +30,7 @@ import argparse
 import hashlib
 import json
 import re
+import time
 from pathlib import Path
 
 try:  # tqdm — только для прогресс-бара; без него разбор всё равно работает
@@ -71,6 +72,15 @@ NONSTD_DIRS = ("parref", "parsum", "doc", "help", "commands", "parameters")
 # Расширения текстовых файлов справки в таких папках
 NONSTD_EXTS = (".htm", ".html", ".txt", ".xml")
 MAX_TEXT_FILE_MB = 5.0
+
+# Порядок обхода папок. Важно для пробного запуска (--limit): раньше первым по
+# алфавиту шёл contexthelp (термины-редиректы), и проба показывала 0 статей.
+DIR_PRIORITY = {
+    "": 0, "files": 0, "help": 1, "parref": 1, "parsum": 1,
+    "commands": 2, "parameters": 2, "doc": 3, "contexthelp": 4,
+}
+
+STATE_FILE = OUTPUT_DIR / "help_parse_state.json"
 
 # Порог «страница не пустая». 15 ловит короткие contexthelp-термины.
 MIN_TEXT_LEN = 15
@@ -146,6 +156,8 @@ def iter_page_files(root: Path):
     if is_nonstd_root(root):
         for ext in (".txt", ".xml"):
             candidates += sorted(root.rglob(f"*{ext}"))
+    # настоящие статьи (files/) — раньше терминов-подсказок (contexthelp/)
+    candidates.sort(key=lambda path: _file_order(root, path))
     for p in candidates:
         parts = {seg.lower() for seg in p.relative_to(root).parts[:-1]}
         if parts & SKIP_PARTS:
@@ -174,6 +186,17 @@ def wrapped_candidates(root: Path, page: Path) -> list[Path]:
                 if cand.is_file():
                     out.append(cand)
     return out
+
+
+def _file_order(root: Path, path: Path) -> tuple[int, str]:
+    """Ключ сортировки: сначала основные статьи, потом подсказки и служебное."""
+    try:
+        rel = path.relative_to(root)
+    except ValueError:
+        rel = path
+    parts = [seg.lower() for seg in rel.parts[:-1]]
+    top = parts[0] if parts else ""
+    return (DIR_PRIORITY.get(top, 5), rel.as_posix().lower())
 
 
 def page_kind(root: Path, page: Path) -> str:
@@ -342,9 +365,12 @@ def parse_all_help(limit: int | None = None, lang: str | None = None,
         print("⚠ HTML-файлы не найдены.")
         return []
 
+    files_total = len(all_files)
     if limit and limit > 0:
         all_files = all_files[:limit]
         print(f"⏱ Ограничение: парсим только {len(all_files)} файлов (для проверки)")
+        print("   → это ПРОБА: база будет неполной, для полной запусти")
+        print("     start_parse_help.bat без числа (пункт 4 меню)")
 
     print(f"📘 Всего к разбору: {len(all_files)} страниц")
 
@@ -501,6 +527,32 @@ def parse_all_help(limit: int | None = None, lang: str | None = None,
         print("\n✂ Примеры страниц без текста:")
         for s in empty_samples:
             print(s)
+
+    # состояние разбора: чтобы батники и отчёт знали, полная это база или проба
+    try:
+        STATE_FILE.write_text(
+            json.dumps({
+                "pages": len(pages),
+                "files_total": files_total,
+                "limit": limit,
+                "complete": not (limit and limit > 0),
+                "from_wrapped": from_wrapped,
+                "terms_linked": resolved,
+                "terms_left": len(leftover_redirects),
+                "roots": [str(r) for r in lang_roots],
+                "finished_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            }, ensure_ascii=False, indent=1),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+    if limit and limit > 0:
+        print()
+        print("⚠ ЭТО ПРОБНЫЙ ЗАПУСК: разобрано только "
+              f"{len(pages)} из {files_total} страниц.")
+        print("   Поиск уже работает, но по этой части справки.")
+        print("   Полная база: start_parse_help.bat (пункт 4 меню).")
 
     REPORT_FILE.write_text(
         _report_text(pages, stats, empty, duplicates, errors, from_wrapped,

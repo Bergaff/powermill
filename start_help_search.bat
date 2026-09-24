@@ -21,13 +21,16 @@ if errorlevel 1 goto failed
 
 echo.
 "%PY%" -m src.help_search %*
+set "RC=%ERRORLEVEL%"
 echo.
-pause
+if not "%RC%"=="0" goto failed
+if not defined PM_FROM_MENU pause
 exit /b 0
 
 :failed
 echo.
-echo [!] Сначала разбери справку: запусти start_parse_help.bat
+echo [!] Не получилось. Если справка ещё не разобрана:
+echo     запусти start_parse_help.bat (пункт 4 меню)
 echo.
 pause
 exit /b 1

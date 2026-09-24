@@ -383,7 +383,7 @@ HELP_TEXT = """\
   /compare <A> и <B>            — сравнение двух стратегий (таблица)
   /sources <вопрос>             — что нашлось в базе (отладка)
   /stats                        — состав базы знаний
-  /exit                         — выход
+  /exit  (или «назад», «меню»)  — выход в главное меню
 
 Примеры:
   Как сделать чистовую обработку по кривой в 5 осях?
@@ -398,7 +398,9 @@ def handle_command(q: str, ai: PowerMillAI) -> bool:
     """Обрабатывает одну строку. Возвращает False, если надо выйти."""
     low = q.lower().strip()
 
-    if low in {"/exit", "exit", "quit", "/q", "/выход"}:
+    # «назад» и «меню» возвращают к выбору пункта главного меню
+    if low in {"/exit", "exit", "quit", "/q", "/выход", "назад", "/назад",
+               "меню", "/меню", "/menu"}:
         return False
     if low in {"/help", "help", "/?", "/помощь"}:
         print(HELP_TEXT)
@@ -464,10 +466,10 @@ def run_chat() -> None:
             if not q:
                 continue
             if not handle_command(q, ai):
-                print("👋 До свидания!")
+                print("👋 Возвращаюсь в меню (start_menu.bat)")
                 break
         except (KeyboardInterrupt, EOFError):
-            print("\n👋 До свидания!")
+            print("\n👋 Возвращаюсь в меню (start_menu.bat)")
             break
 
 

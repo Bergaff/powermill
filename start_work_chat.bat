@@ -26,13 +26,13 @@ echo     /compare A и B          - сравнение стратегий
 echo     /sources запрос         - что нашлось в базе
 echo     /stats                  - состав базы знаний
 echo     /help                   - все команды
-echo     /exit                   - выход
+echo     назад или меню          - выход в главное меню
 echo.
 python -m src.rag
 echo.
-echo Чат завершён. Вернуться в меню: start_menu.bat
+echo Чат завершён.
 echo.
-pause
+if not defined PM_FROM_MENU pause
 exit /b 0
 
 :no_venv

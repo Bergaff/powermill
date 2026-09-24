@@ -2,6 +2,9 @@
 chcp 65001 >nul
 title PowerMill AI - главное меню
 cd /d "%~dp0"
+rem Дочерние батники видят эту переменную и не делают лишнюю «паузу»:
+rem после Ctrl+C или слова «меню» управление сразу возвращается сюда.
+set "PM_FROM_MENU=1"
 
 :menu
 cls
@@ -36,6 +39,9 @@ echo     19  -  Логи последних запусков (если что-т
 echo.
 echo      0  -  Выход
 echo.
+echo   Внутри любых экранов слово  «назад»  или  «меню»
+echo   возвращает к этому списку.
+echo.
 set /p choice="   Выбор (0-19): "
 
 if "%choice%"=="1"  goto chat
@@ -58,6 +64,8 @@ if "%choice%"=="17" goto update
 if "%choice%"=="18" goto light
 if "%choice%"=="19" goto logs
 if "%choice%"=="0"  exit /b 0
+if /i "%choice%"=="назад" exit /b 0
+if /i "%choice%"=="меню" goto menu
 goto menu
 
 :chat

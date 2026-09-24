@@ -23,6 +23,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from src.console import classify
+
 # --------------------------------------------------------------------------
 # Справочные данные
 # --------------------------------------------------------------------------
@@ -472,52 +474,109 @@ def answer(text: str) -> tuple[str, dict]:
     return out, res.as_dict()
 
 
-def interactive() -> None:
-    """Мастер расчёта: спрашивает материал/инструмент/операцию по-русски."""
+CALC_STEPS = [
+    ("Материал",
+     "Сталь 40Х / 12Х18Н10Т / Д16Т / СЧ20 / латунь",
+     "Сталь 40Х"),
+    ("Инструмент",
+     "фреза D16 z4 / сферическая D8 / торцевая D63 / сверло D8.5",
+     "фреза D16 z4"),
+    ("Операция",
+     "черновая / получистовая / чистовая / hsm",
+     "черновая"),
+    ("Ограничения",
+     "макс. обороты шпинделя, кВт — можно пусто",
+     ""),
+]
+
+WIZARD_HELP = """
+  Как отвечать:
+    Enter            — оставить значение по умолчанию и идти дальше
+    назад            — вернуться к предыдущему вопросу
+    меню             — выйти в главное меню
+    ?                — эта подсказка
+"""
+
+
+def interactive() -> int:
+    """Мастер расчёта с возвратом на предыдущий шаг."""
+    from src.console import Wizard, read_line
+
     print("=" * 58)
     print("  КАЛЬКУЛЯТОР РЕЖИМОВ РЕЗАНИЯ PowerMill")
     print("  S — обороты, F — минутная подача, ap/ae — глубины")
     print("=" * 58)
-    print("  Enter без ввода = значение по умолчанию (сталь 40Х, D16, черновая)")
-    print("  Вместо ответа можно написать q — выход\n")
+    print("  Enter — значение по умолчанию, «назад» — вернуться,")
+    print("  «меню» — выход, «?» — подсказка\n")
 
+    wizard = Wizard(CALC_STEPS)
     while True:
-        try:
-            material = input("Материал   (Сталь 40Х / 12Х18Н10Т / Д16Т / СЧ20): ").strip()
-            tool = input("Инструмент (фреза D16 z4 / сферическая D8 / торцевая D63): ").strip()
-            op = input("Операция   (черновая / получистовая / чистовая / hsm): ").strip()
-            limits = input("Ограничения (макс. обороты, кВт — можно пусто): ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\nВыход.")
-            return
+        if wizard.finished:
+            break
+        answer = read_line(wizard.prompt())
+        if answer is None:
+            return 0
+        action = wizard.submit(answer)
 
-        if any(v.lower() in {"q", "й", "quit", "exit", "выход"}
-               for v in (material, tool, op, limits)):
-            print("Выход.")
-            return
+        if action == "menu":
+            print("Возврат в меню.")
+            return 0
+        if action == "help":
+            print(WIZARD_HELP)
+        elif action == "back":
+            print("← вернулись на предыдущий вопрос")
+        elif action == "done":
+            break
 
-        query = ", ".join(p for p in (material, tool, op, limits) if p)
-        if not query:
-            query = "Сталь 40Х, фреза D16, черновая"
+    print()
+    print(answer_report(wizard.query("Сталь 40Х, фреза D16, черновая")))
 
+    # ---- повторный расчёт с сохранением прежних ответов ----
+    while True:
+        again = read_line('\nEnter — новый расчёт, «назад» — изменить параметры, '
+                          '«меню» — выход: ')
+        if again is None:
+            return 0
+        action = classify(again)
+        if action in {"menu"}:
+            print("Возврат в меню.")
+            return 0
+        if action == "back":
+            wizard.restart()
+            print("Меняем параметры (Enter — оставить прежние).\n")
+            while True:
+                if wizard.finished:
+                    break
+                answer = read_line(wizard.prompt())
+                if answer is None:
+                    return 0
+                step_action = wizard.submit(answer)
+                if step_action == "menu":
+                    print("Возврат в меню.")
+                    return 0
+                if step_action == "help":
+                    print(WIZARD_HELP)
+                elif step_action == "back":
+                    print("← вернулись на предыдущий вопрос")
+                elif step_action == "done":
+                    break
+            print()
+            print(answer_report(wizard.query("Сталь 40Х, фреза D16, черновая")))
+            continue
+        # Enter или любой текст — новый расчёт с теми же параметрами
         print()
-        print(answer(query)[0])
-        print()
-        try:
-            again = input("Ещё расчёт? [Enter — да, q — выход]: ").strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            print("\nВыход.")
-            return
-        print()
-        if again in {"q", "й", "quit", "exit", "н", "no", "n"}:
-            print("Выход.")
-            return
+        print(answer_report(wizard.query("Сталь 40Х, фреза D16, черновая")))
+
+
+def answer_report(query: str) -> str:
+    """Текст отчёта по строке-запросу (используется и в мастере, и в CLI)."""
+    return answer(query)[0]
 
 
 if __name__ == "__main__":
     import sys
 
     if len(sys.argv) > 1:
-        print(answer(" ".join(sys.argv[1:]))[0])
+        print(answer_report(" ".join(sys.argv[1:]))[0])
     else:
-        interactive()
+        sys.exit(interactive())

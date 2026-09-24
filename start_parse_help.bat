@@ -72,6 +72,9 @@ echo   Дальше: пункт 2 меню - поиск по справке
 echo =========================================================
 echo.
 if "%LIMIT%"=="" goto finish
+echo ПРОБА ЗАВЕРШЕНА: база пока неполная.
+echo   Повтори пункт 4 меню - БЕЗ числа, тогда справка разберётся целиком.
+echo.
 echo Открываю отчёт разбора...
 if exist "output\help_report.txt" start "" notepad "output\help_report.txt"
 goto finish

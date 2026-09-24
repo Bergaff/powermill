@@ -19,5 +19,5 @@ echo.
 
 "%PY%" -m src.cutting %*
 echo.
-pause
+if not defined PM_FROM_MENU pause
 exit /b 0

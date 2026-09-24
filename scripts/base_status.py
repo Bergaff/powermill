@@ -49,6 +49,17 @@ def count_jsonl(path: Path) -> int:
     return n
 
 
+def read_state() -> dict:
+    """Состояние последнего разбора (пишет src/html_parser)."""
+    path = OUTPUT_DIR / "help_parse_state.json"
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
 def line(title: str) -> None:
     print("\n" + "-" * 58)
     print(f"  {title}")
@@ -76,9 +87,19 @@ def main() -> None:
     print(f"  Путь справки: {HELP_DIR}  (есть: {HELP_DIR.exists()})")
     pages_file = OUTPUT_DIR / "help_pages.jsonl"
     pages = count_jsonl(pages_file)
-    if pages:
+    state = read_state()
+    probe = bool(state) and not state.get("complete", True)
+    if pages and probe:
         size = pages_file.stat().st_size / 1e6
-        ok(f"Разобрано страниц: {pages} ({size:.1f} МБ) — {pages_file.name}")
+        print(f"  [ПРОБА]  Разобрано {pages} из {state.get('files_total', '?')} страниц "
+              f"({size:.1f} МБ)")
+        print("           -> это пробный запуск; полная база: start_parse_help.bat (пункт 4)")
+    elif pages:
+        size = pages_file.stat().st_size / 1e6
+        when = f", {state.get('finished_at')}" if state else ""
+        ok(f"Разобрано страниц: {pages} ({size:.1f} МБ){when}")
+        if state:
+            ok(f"Терминов привязано к статьям: {state.get('terms_linked', 0)}")
     else:
         todo("Справка ещё не разобрана",
              "запусти start_parse_help.bat  (пробно: start_parse_help.bat 30)")
@@ -128,6 +149,8 @@ def main() -> None:
     steps: list[str] = []
     if not pages:
         steps.append("start_parse_help.bat              — разобрать справку")
+    elif probe:
+        steps.append("start_parse_help.bat              — полный разбор (сейчас только проба)")
     if not HELP_SEARCH_DB.exists():
         steps.append("start_parse_help.bat              — собрать индекс поиска")
     if size_mb <= 0.1:

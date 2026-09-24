@@ -258,41 +258,94 @@ def print_hits(hits: list[dict], preview: int = 300) -> None:
         print(f"   файл: {hit['source']}")
 
 
+SEARCH_HELP = """
+  Как искать:
+    просто слова          — например: границы, врезание, Swarf, черновая
+    точный термин         — как в интерфейсе: «Типы границ», «Диалог Инструмент»
+    служебное имя диалога — например: TOOLDIALOG (contextid из справки)
+    цифра (1, 2, 3…)      — открыть найденную статью целиком
+    назад / меню          — выйти в главное меню (start_menu.bat)
+    ?                     — эта подсказка
+"""
+
+
+def show_full_page(hs: "HelpSearch", hit: dict, limit: int = 6000) -> None:
+    """Показывает текст найденной статьи целиком (или первые limit символов)."""
+    text = hs.page_text(hit["source"]) or hit.get("text", "")
+    title = hit.get("breadcrumb") or hit.get("title") or hit["source"]
+    print("\n" + "=" * 62)
+    print(f"  {title}")
+    print(f"  Файл: {hit['source']}")
+    print("=" * 62)
+    print(text[:limit])
+    if len(text) > limit:
+        print(f"\n… (показаны первые {limit} символов из {len(text)};"
+              f" полный текст — в файле выше)")
+
+
 def interactive(top_k: int = 6) -> int:
-    """Поиск по справке без ИИ и без векторов — мгновенно, только ключевые слова."""
+    """Поиск по справке без ИИ: мгновенно, только ключевые слова.
+
+    Управление: «назад»/«меню» — выйти в меню, «?» — подсказка,
+    число после поиска — открыть найденную статью целиком.
+    """
+    from src.console import classify, read_line
+
     hs = HelpSearch()
     if not hs.pages_file.exists():
         print("Справка ещё не разобрана — искать пока нечего.")
         print()
         print("Сделай так:")
-        print("  1) запусти  start_parse_help.bat      (полный разбор, 1-3 минуты)")
+        print("  1) запусти  start_parse_help.bat      (полный разбор)")
         print("     или        start_parse_help.bat 30 (проба на 30 страницах)")
         print("  2) потом снова запусти этот поиск")
         return 2
     if hs.is_stale():
         print("Собираю индекс поиска (это быстро)...")
         hs.build()
+
     print("=" * 58)
     print("  ПОИСК ПО СПРАВКЕ PowerMill (без ИИ, мгновенный)")
     print(f"  Страниц в индексе: {hs.count()}")
-    print("  Введи запрос. Пустая строка — выход.")
+    print("  Введи запрос. «меню» — выход, «?» — подсказка.")
+    print("  После поиска цифра (1, 2, 3…) — открыть статью целиком.")
     print("=" * 58)
 
+    last_hits: list[dict] = []
     while True:
-        try:
-            query = input("\n🔎 Что ищем: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\nВыход.")
-            return
-        if not query or query.lower() in {"q", "й", "exit", "выход"}:
-            print("Выход.")
-            return
+        query = read_line("\n🔎 Что ищем: ")
+        if query is None:
+            return 0
+
+        action = classify(query)
+        if action in {"menu", ""}:
+            print("Возврат в меню.")
+            return 0
+        if action == "help":
+            print(SEARCH_HELP)
+            continue
+
+        # цифра = открыть статью из прошлой выдачи
+        if query.strip().isdigit() and last_hits:
+            number = int(query.strip())
+            if 1 <= number <= len(last_hits):
+                show_full_page(hs, last_hits[number - 1])
+            else:
+                print(f"Всего результатов {len(last_hits)} — "
+                      f"введи число от 1 до {len(last_hits)}.")
+            continue
+
         hits = hs.search(query, top_k=top_k)
         if not hits:
             print("Ничего не найдено. Попробуй один-два ключевых слова "
                   "(например: «Swarf», «границы», «врезание»).")
+            print("Совет: термин можно ввести как в интерфейсе — «Типы границ».")
             continue
+
+        last_hits = hits
         print_hits(hits)
+        print(f"\n  Цифра 1-{len(hits)} — открыть статью целиком. "
+              f"Или введи новый запрос. «меню» — выход.")
 
 
 def main_cli() -> int:
