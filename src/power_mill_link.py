@@ -425,27 +425,42 @@ def main() -> int:
     from config import OUTPUT_DIR
 
     data = collect()
-    print(format_report(data))
+    report = format_report(data)
+    print(report)
 
     path = write_probe_macro(OUTPUT_DIR)
+
+    lines: list[str] = [report, ""]
     if any(data.get("bridges", {}).values()):
-        print("Мост Python стоит — разведка API: пункт 27 меню (или /pm в чате).")
+        lines.append("Мост Python стоит — разведка API: пункт 27 меню (или /pm в чате).")
     else:
-        print("Дальше: пункт 27 меню — поставить мост к PowerMill (живое чтение проекта).")
-    print()
-    print("Макрос-разведчик записан:")
-    print(f"  {path}")
-    print()
-    print("Что сделать (один раз, 20 секунд):")
-    print("  1) открой PowerMill и нужный проект")
-    print("  2) вкладка «Макрос» (или Лента -> Макрос) -> Выполнить -> выбери файл")
-    print("  3) откроется окно сообщений: скопируй строки между")
-    print("     --- POWERMILL AI PROBE START --- и --- ... END ---")
-    print("  4) вставь их в ассистента (пункт 1 меню) — он посмотрит,")
-    print("     что видит PML в твоей установке")
-    print()
-    print("Это проверяет сразу три вещи: исполняются ли макросы, какие папки")
-    print("видит PowerMill и как называются объекты в твоём проекте.")
+        lines.append("Дальше: пункт 27 меню — поставить мост к PowerMill (живое чтение проекта).")
+    lines.append("")
+    lines.append("Макрос-разведчик записан:")
+    lines.append(f"  {path}")
+    lines.append("")
+    lines.append("Что сделать (один раз, 20 секунд):")
+    lines.append("  1) открой PowerMill и нужный проект")
+    lines.append("  2) вкладка «Макрос» (или Лента -> Макрос) -> Выполнить -> выбери файл")
+    lines.append("  3) откроется окно сообщений: скопируй строки между")
+    lines.append("     --- POWERMILL AI PROBE START --- и --- ... END ---")
+    lines.append("  4) вставь их в ассистента (пункт 1 меню) — он посмотрит,")
+    lines.append("     что видит PML в твоей установке")
+    lines.append("")
+    lines.append("Это проверяет сразу три вещи: исполняются ли макросы, какие папки")
+    lines.append("видит PowerMill и как называются объекты в твоём проекте.")
+    tail = "\n".join(lines[1:])
+    print(tail)
+
+    report_path = Path(OUTPUT_DIR) / "pm_link_report.txt"
+    try:
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        print()
+        print(f"Отчёт сохранён: {report_path}")
+        print("Открыть его можно пунктом 29 меню («Показать отчёты»).")
+    except OSError as error:
+        print(f"(!) Не удалось сохранить отчёт: {error}")
     return 0
 
 

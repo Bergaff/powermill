@@ -113,6 +113,29 @@ def test_menu_items_are_sequential_and_targets_exist():
         assert (ROOT / clean).exists(), f"меню вызывает несуществующий {target}"
 
 
+DIAGNOSTIC_BATS = ("check_pm_api.bat", "install_bridge.bat",
+                   "prepare_pm_macros.bat", "show_reports.bat")
+
+
+@pytest.mark.parametrize("name", DIAGNOSTIC_BATS)
+def test_diagnostic_bats_always_pause(name: str):
+    """Окно не должно «улетать»: результат нужно успеть прочитать.
+
+    Раньше при запуске из меню паузы не было (PM_FROM_MENU), и технолог не
+    успевал скопировать вывод — теперь пауза всегда, а отчёт сохраняется в
+    файл, который открывается пунктом 29.
+    """
+    text = (ROOT / "scripts" / name).read_text(encoding="utf-8")
+    assert "pause" in text
+    assert "PM_FROM_MENU" not in text
+
+
+def test_diagnostic_bats_point_to_reports():
+    for name in DIAGNOSTIC_BATS[:-1]:
+        text = (ROOT / "scripts" / name).read_text(encoding="utf-8")
+        assert "29" in text, f"{name} должен подсказывать пункт 29 (отчёты)"
+
+
 def test_gitattributes_forces_crlf():
     attrs = (ROOT / ".gitattributes").read_text(encoding="utf-8")
     assert "*.bat" in attrs and "eol=crlf" in attrs, \

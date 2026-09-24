@@ -187,5 +187,43 @@ def test_bridge_check_import_fails_cleanly():
 def test_bridge_packages_described_for_humans():
     from scripts import install_bridge
 
-    titles = " ".join(purpose for _name, purpose in install_bridge.PACKAGES)
+    titles = " ".join(purpose for _name, purpose, _mods in install_bridge.PACKAGES)
     assert "COM" in titles and ".NET" in titles
+
+
+def test_bridge_checks_real_module_names():
+    """Регресс: у пакета pywin32 модуль называется win32com, а не pywin32.
+
+    Раньше проверка шла по имени пакета и врала: «импорт: ОШИБКА —
+    No module named 'pywin32'» при живом-рабочем pywin32.
+    """
+    from scripts import install_bridge
+
+    mapped = {name: modules for name, _purpose, modules in install_bridge.PACKAGES}
+    assert "win32com.client" in mapped["pywin32"]
+    assert "pywin32" not in mapped["pywin32"]
+    assert "clr" in mapped["pythonnet"]
+
+
+def test_bridge_check_package_reports_working_module(monkeypatch):
+    from scripts import install_bridge
+
+    def fake_check(module):
+        if module == "pythoncom":
+            return True, "import ok"
+        return False, f"нет модуля {module}"
+
+    monkeypatch.setattr(install_bridge, "check_import", fake_check)
+    ok, message = install_bridge.check_package(("win32com.client", "pythoncom"))
+    assert ok is True
+    assert "pythoncom" in message
+
+
+def test_bridge_check_package_lists_all_failures(monkeypatch):
+    from scripts import install_bridge
+
+    monkeypatch.setattr(install_bridge, "check_import",
+                        lambda module: (False, f"нет {module}"))
+    ok, message = install_bridge.check_package(("win32com.client", "pythoncom"))
+    assert ok is False
+    assert "win32com.client" in message and "pythoncom" in message

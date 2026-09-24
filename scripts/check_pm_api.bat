@@ -9,7 +9,9 @@ echo.
 set "RC=%ERRORLEVEL%"
 echo.
 if not "%RC%"=="0" goto failed
-if not defined PM_FROM_MENU pause
+echo Отчёт можно открыть пунктом 29 меню ("Показать отчёты").
+echo [Нажми любую клавишу, чтобы вернуться в меню]
+pause >nul
 exit /b 0
 
 :failed

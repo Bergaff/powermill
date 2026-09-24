@@ -45,13 +45,14 @@ echo     25  -  Подготовить плагин PowerMill (найти кар
 echo     26  -  Починить батники (если окно закрылось или сыпет ошибки)
 echo     27  -  Поставить мост к PowerMill (живое чтение проекта)
 echo     28  -  Макросы PowerMill AI внутри PowerMill (кнопка ассистента)
+echo     29  -  Показать отчёты (блокнот: разведка API, макросы, снимок)
 echo.
 echo      0  -  Выход
 echo.
 echo   Внутри любых экранов слово  «назад»  или  «меню»
 echo   возвращает к этому списку.
 echo.
-set /p choice="   Выбор (0-28): "
+set /p choice="   Выбор (0-29): "
 
 if "%choice%"=="1"  goto chat
 if "%choice%"=="2"  goto search
@@ -81,6 +82,7 @@ if "%choice%"=="25" goto plugin
 if "%choice%"=="26" goto repair
 if "%choice%"=="27" goto bridge
 if "%choice%"=="28" goto pmmacros
+if "%choice%"=="29" goto reports
 if "%choice%"=="0"  exit /b 0
 if /i "%choice%"=="назад" exit /b 0
 if /i "%choice%"=="меню" goto menu
@@ -160,6 +162,10 @@ goto menu
 
 :api
 call "%~dp0scripts\setup_api.bat"
+goto menu
+
+:reports
+call "%~dp0scripts\show_reports.bat"
 goto menu
 
 :pmmacros
