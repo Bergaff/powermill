@@ -115,3 +115,24 @@ def test_parse_all_help_reads_contextid(parsed_pages):
 def test_redirect_pages_are_not_stored_as_separate_articles(parsed_pages):
     """Страница-редирект не должна становиться «статьёй» без содержимого."""
     assert not any(p.get("kind") == "redirect" and p.get("text") for p in parsed_pages)
+
+
+def test_nonstd_root_pml_reference(tmp_path):
+    """Папка установки PowerMill (PARREF/PARSUM) читается как источник знаний."""
+    from src.html_parser import parse_all_help
+
+    root = tmp_path / "C"
+    (root / "PARREF").mkdir(parents=True)
+    (root / "PARSUM").mkdir(parents=True)
+    (root / "PARREF" / "parref.htm").write_text(
+        "<html><head><title>PARREF</title></head><body>"
+        "<h1>PARREF</h1><p>Параметры PML: TOOL.FEED, BOUNDARY.TOLERANCE.</p></body></html>",
+        encoding="utf-8")
+    (root / "PARSUM" / "parsum.txt").write_text(
+        "PARSUM: сводка параметров PML\nTOOL.DIAMETER - диаметр инструмента\n",
+        encoding="utf-8")
+
+    pages = parse_all_help(roots=[root])
+    assert len(pages) == 2
+    assert any("TOOL.FEED" in p["text"] for p in pages)
+    assert any(p["kind"] == "pml" for p in pages)

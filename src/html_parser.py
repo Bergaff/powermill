@@ -65,6 +65,13 @@ REPORT_FILE = OUTPUT_DIR / "help_report.txt"
 
 SKIP_PARTS = {"bin", "res", "images", "image", "css", "js", "scripts", "wrapped-files"}
 
+# Нестандартный корень: папка установки PowerMill (lib\locale\C) со справочником
+# PML — PARREF (параметры), PARSUM (сводка), DOC/HELP.
+NONSTD_DIRS = ("parref", "parsum", "doc", "help", "commands", "parameters")
+# Расширения текстовых файлов справки в таких папках
+NONSTD_EXTS = (".htm", ".html", ".txt", ".xml")
+MAX_TEXT_FILE_MB = 5.0
+
 # Порог «страница не пустая». 15 ловит короткие contexthelp-термины.
 MIN_TEXT_LEN = 15
 
@@ -98,6 +105,15 @@ def help_roots() -> list[Path]:
     return out
 
 
+def is_nonstd_root(root: Path) -> bool:
+    """Похоже ли, что это папка установки PowerMill со справочником PML."""
+    try:
+        names = {p.name.lower() for p in root.iterdir() if p.is_dir()}
+    except OSError:
+        return False
+    return bool(names & set(NONSTD_DIRS))
+
+
 def pick_lang_dir(root: Path, lang: str) -> Path | None:
     """Выбирает языковую папку внутри Help: l.rus / l.enu / ... (без дублей)."""
     if looks_like_help_root(root):
@@ -107,7 +123,8 @@ def pick_lang_dir(root: Path, lang: str) -> Path | None:
     except OSError:
         return None
     if not subdirs:
-        return None
+        # справочник PML установки PowerMill (PARREF/PARSUM/DOC/HELP)
+        return root if is_nonstd_root(root) else None
 
     by_lang = {p.name.split(".", 1)[1].lower(): p for p in subdirs}
     if lang and lang != "auto":
@@ -122,13 +139,24 @@ def iter_page_files(root: Path):
     """Файлы-страницы справки: все .htm/.html, кроме служебных папок.
 
     Обычно это `files\\*.htm` (1350 тем) + `contexthelp\\*.htm`
-    (1255 коротких терминов-подсказок). Порядок — по папкам справки.
+    (1255 терминов). Для папки установки PowerMill (PARREF/PARSUM/DOC/HELP)
+    дополнительно читаются .txt/.xml.
     """
     candidates = sorted(root.rglob("*.htm")) + sorted(root.rglob("*.html"))
+    if is_nonstd_root(root):
+        for ext in (".txt", ".xml"):
+            candidates += sorted(root.rglob(f"*{ext}"))
     for p in candidates:
         parts = {seg.lower() for seg in p.relative_to(root).parts[:-1]}
         if parts & SKIP_PARTS:
             continue
+        if p.suffix.lower() in (".txt", ".xml"):
+            try:
+                if p.stat().st_size > MAX_TEXT_FILE_MB * 1e6:
+                    print(f"ℹ Пропускаю большой файл: {p.name}")
+                    continue
+            except OSError:
+                continue
         yield p
 
 
@@ -170,6 +198,13 @@ def _read_text(path: Path) -> tuple[str, str]:
         raw = path.read_bytes()
     except OSError:
         return "", ""
+    if path.suffix.lower() in (".txt", ".xml"):
+        from src.help_extract import decode_html, html_to_structured_text
+
+        text = decode_html(raw)
+        if path.suffix.lower() == ".xml" and "<" in text[:200]:
+            text = html_to_structured_text(text)
+        return path.stem, text.strip()
     return extract_page_text(raw, path)
 
 
