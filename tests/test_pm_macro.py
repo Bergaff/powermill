@@ -144,7 +144,49 @@ def test_macro_text_never_goes_into_file_write_as_literal():
                     argument = stripped[len(command):].strip()
                     assert argument.startswith("$"), f"литерал в {command}: {stripped}"
                     checked += 1
+            if stripped.startswith("MESSAGE"):
+                # MESSAGE INFO/WARN/ERROR — текст тоже должен быть переменной
+                last = stripped.split()[-1]
+                assert last.startswith("$"), f"литерал в MESSAGE: {stripped}"
+                checked += 1
     assert checked > 40, f"подозрительно мало проверенных строк: {checked}"
+
+
+def test_ask_macro_asks_material_and_tool_for_cutting_mode():
+    """Для режимов резания макрос сам спрашивает материал и фрезу.
+
+    Иначе на вопрос «какой фрезой сделать» ассистент отвечает по «стали
+    среднеуглеродистой» и диаметру по умолчанию, и в ответе появляется
+    «материал не распознан» (так и было на живом PowerMill 24.09).
+    """
+    code = pm_macro.ask_macro()
+    assert "IF $mode == 3 {" in code                       # 3 — «Режимы резания»
+    assert 'INPUT "Материал (например: сталь 40Х, 12Х18Н10Т, Д16Т):"' in code
+    assert 'INPUT "Фреза: диаметр и число зубьев (например: D12 z4):"' in code
+    assert '$question = $question + "; материал " + $pm_material' in code
+    assert '$question = $question + "; фреза " + $pm_tool' in code
+    # и такие уточнения ассистент действительно понимает
+    from src import cutting
+
+    answer, _data = cutting.answer("какой фрезой сделать; материал сталь 40Х; фреза D16 z4")
+    assert "Сталь 40Х" in answer.splitlines()[0]
+    assert "D16 z4" in answer.splitlines()[0]
+
+
+def test_ask_macro_cutting_index_matches_modes():
+    """Номер режима в макросе и в списке MODES — одно и то же место (3)."""
+    index = [code for code, _title in pm_macro.MODES].index("cutting")
+    assert index == 3
+    assert "IF $mode == 3 {" in pm_macro.ask_macro()
+
+
+def test_ask_macro_message_uses_variable():
+    """В MESSAGE тоже передаём переменную — как в FILE WRITE и PRINT."""
+    code = pm_macro.ask_macro()
+    for line in code.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("MESSAGE"):
+            assert stripped.split()[-1].startswith("$"), stripped
 
 
 def test_test_macro_passes_own_validator():
