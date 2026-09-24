@@ -57,13 +57,16 @@ echo     33  -  Создать фрезу в проекте PowerMill (и выя
 echo     34  -  Панель «PowerMill AI» на ленте PowerMill (кнопки)
 echo.
 echo     35  -  Проверить траектории (зарезы, столкновения)  (шаг 3.4)
+echo     36  -  Вывести NC-программу из траекторий          (шаг 3.5)
+echo.
+echo     37  -  СДЕЛАЙ: план -> выполнение -> проверки -> NC (шаг 3.6)
 echo.
 echo      0  -  Выход
 echo.
 echo   Внутри любых экранов слово  «назад»  или  «меню»
 echo   возвращает к этому списку.
 echo.
-set /p choice="   Выбор (0-36): "
+set /p choice="   Выбор (0-37): "
 
 if "%choice%"=="1"  goto chat
 if "%choice%"=="2"  goto search
@@ -101,6 +104,7 @@ if "%choice%"=="33" goto protool
 if "%choice%"=="34" goto ribbon
 if "%choice%"=="35" goto checks
 if "%choice%"=="36" goto nc
+if "%choice%"=="37" goto flow
 if "%choice%"=="0"  exit /b 0
 if /i "%choice%"=="назад" exit /b 0
 if /i "%choice%"=="меню" goto menu
@@ -212,6 +216,10 @@ goto menu
 
 :nc
 call "%~dp0scripts\make_nc.bat"
+goto menu
+
+:flow
+call "%~dp0scripts\make_flow.bat"
 goto menu
 
 :pmmacros
