@@ -34,7 +34,7 @@ from config import (
     SOURCE_MAX_DISTANCE,
     TOP_K,
 )
-from src import cutting, llm, pml_vocab
+from src import cutting, llm, pml_vocab, project_context
 from src.hardware import set_process_priority
 
 os.environ.setdefault("OLLAMA_HOST", OLLAMA_BASE_URL)
@@ -276,7 +276,11 @@ class PowerMillAI:
     def ask(self, query: str) -> str:
         """Обычный вопрос по документации."""
         hits = self._retrieve(query)
-        prompt = _render(SYSTEM_PROMPT_CHAT, _format_hits(hits))
+        context = _format_hits(hits)
+        project = project_context.to_prompt_block()
+        if project:
+            context = project + "\n\n" + context
+        prompt = _render(SYSTEM_PROMPT_CHAT, context)
         answer = self._generate(LLM_MODEL, f"{prompt}\n\nВопрос технолога: {query}\n\nОтвет эксперта:")
         return f"{answer}\n\n{_format_sources(hits)}"
 
@@ -290,7 +294,15 @@ class PowerMillAI:
            конкретные подозрительные строки.
         """
         vocab = pml_vocab.load_vocabulary()
-        hits = self._retrieve(f"{task} PML макрос PowerMill", top_k=max(TOP_K, 6))
+        project = project_context.load()
+        # ищем и по задаче, и по именам объектов проекта — чтобы в контекст
+        # попали статьи именно про эти объекты
+        query = f"{task} PML макрос PowerMill"
+        if project:
+            query += " " + " ".join(
+                (project.get(section) or [""])[0]
+                for section in ("toolpaths", "boundaries", "tools"))
+        hits = self._retrieve(query, top_k=max(TOP_K, 6))
 
         entities = pml_vocab.relevant_entities(task, vocab, limit=25)
         params = pml_vocab.relevant_parameters(task, hits, vocab, limit=40)
@@ -304,8 +316,11 @@ class PowerMillAI:
             vocabulary += ("\n\n(!) Словарь PML пуст — справка ещё не разобрана. "
                            "Разбери справку (пункт 4 меню), и макросы станут точнее.")
 
+        project_block = project_context.to_prompt_block(project)
+
         prompt = _render(SYSTEM_PROMPT_MACRO, _format_hits(hits),
-                         vocabulary=vocabulary)
+                         vocabulary=vocabulary + ("\n\n" + project_block
+                                                  if project_block else ""))
         code = self._generate(LLM_CODE_MODEL,
                               f"{prompt}\n\nЗадача: {task}\n\nКод PML:",
                               temperature=0.2)
@@ -393,6 +408,29 @@ class PowerMillAI:
             lines.append(f"     {h['text'][:180].replace(chr(10), ' ')}...")
             lines.append("")
         return "\n".join(lines)
+
+    def project(self) -> str:
+        """Что известно о проекте технолога + проверки по нему."""
+        context = project_context.load()
+        if not context:
+            return ("Снимок проекта пока не загружен, поэтому макросы пишутся "
+                    "с абстрактными именами.\n\n"
+                    "Как загрузить (30 секунд):\n"
+                    "  1) пункт 23 меню — создаст макрос разведки "
+                    "output\\PM_PROBE.mac;\n"
+                    "  2) запусти его в PowerMill (вкладка «Макрос» -> Выполнить);\n"
+                    "  3) пункт 24 меню — вставь вывод в блокнот, сохрани и закрой.")
+        text = project_context.summary(context)
+        checks = project_context.format_checks(context)
+        if checks:
+            text += "\n\n" + checks
+        return text
+
+    def pm_status(self) -> str:
+        """Живое подключение к PowerMill (шаг 2.1)."""
+        from src import pm_live
+
+        return pm_live.status_report(verbose=True)
 
     def ai_line(self) -> str:
         """Строка «какой ИИ используется» для статуса и отчётов."""
@@ -506,6 +544,8 @@ HELP_TEXT = """\
   /cutting <материал> <фреза>   — режимы резания S/F/ap/ae (расчёт, без ИИ)
   /error <текст ошибки>         — причина ошибки + что исправить
   /compare <A> и <B>            — сравнение двух стратегий (таблица)
+  /project                      — проект PowerMill: объекты и проверки (пункты 23-24)
+  /pm                           — живое подключение к PowerMill (шаг 2.1)
   /sources <вопрос>             — что нашлось в базе (отладка)
   /stats                        — состав базы знаний
   /exit  (или «назад», «меню»)  — выход в главное меню
@@ -537,6 +577,13 @@ def handle_command(q: str, ai: PowerMillAI) -> bool:
         rest = q[len("/sources"):].strip()
         print("\n" + (ai.sources(rest) if rest
                       else "⚠️ Использование: /sources как сделать границу"))
+        return True
+    if low.startswith("/project"):
+        print("\n" + ai.project())
+        return True
+    if low.startswith("/pm"):
+        print("\n🤖 Пробую подключиться к PowerMill...")
+        print(ai.pm_status())
         return True
     if low.startswith("/cutting"):
         rest = q[len("/cutting"):].strip()
