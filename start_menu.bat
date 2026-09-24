@@ -47,12 +47,15 @@ echo     27  -  Поставить мост к PowerMill (живое чтени�
 echo     28  -  Макросы PowerMill AI внутри PowerMill (кнопка ассистента)
 echo     29  -  Показать отчёты (блокнот: разведка API, макросы, снимок)
 echo.
+echo    ЗАПИСЬ В ПРОЕКТ (Уровень 3, по шагам)
+echo     30  -  Записать режимы резания в проект PowerMill (шаг 3.1)
+echo.
 echo      0  -  Выход
 echo.
 echo   Внутри любых экранов слово  «назад»  или  «меню»
 echo   возвращает к этому списку.
 echo.
-set /p choice="   Выбор (0-29): "
+set /p choice="   Выбор (0-30): "
 
 if "%choice%"=="1"  goto chat
 if "%choice%"=="2"  goto search
@@ -83,6 +86,7 @@ if "%choice%"=="26" goto repair
 if "%choice%"=="27" goto bridge
 if "%choice%"=="28" goto pmmacros
 if "%choice%"=="29" goto reports
+if "%choice%"=="30" goto apply
 if "%choice%"=="0"  exit /b 0
 if /i "%choice%"=="назад" exit /b 0
 if /i "%choice%"=="меню" goto menu
@@ -166,6 +170,10 @@ goto menu
 
 :reports
 call "%~dp0scripts\show_reports.bat"
+goto menu
+
+:apply
+call "%~dp0scripts\apply_cutting.bat"
 goto menu
 
 :pmmacros

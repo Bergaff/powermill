@@ -25,6 +25,8 @@ KNOWN_REPORTS = (
     ("pm_macros_report.txt", "Макросы внутри PowerMill (пункт 28)"),
     ("plugin_report.txt", "Каркас плагина PowerMill (пункт 25)"),
     ("project_context.json", "Снимок проекта (пункт 24)"),
+    ("pm_edit_report.txt", "Запись режимов резания в проект (пункт 30)"),
+    ("pm_edit_result.txt", "Что записалось в проект: было → стало (макрос)"),
     ("pm_project.txt", "Снимок проекта от макроса PowerMill (пункт 24)"),
     ("bat_check.txt", "Проверка батников (пункт 26)"),
     ("pml_vocabulary.txt", "Словарь PML из справки"),

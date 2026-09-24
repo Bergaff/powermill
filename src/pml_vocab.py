@@ -48,7 +48,13 @@ SET GET ADD REMOVE APPEND CLEAR LOCK UNLOCK RESET LOCALVARS
 ABORT EXIT STOP PAUSE PING TRACEFILE EXECUTE DOCOMMAND
 FILE OPEN CLOSE READ WRITE TO AS FROM APPEND DELETE INPUT CHOICE QUERY
 INFO WARN CRLF OLE FILEACTION DIALOGS ON OFF
+RPM FRATE PRATE RSPEED TPPAGE PAR
 """.split())
+# RPM / FRATE / PRATE / RSPEED / TPPAGE / PAR — слова команды EDIT из рабочего
+# макроса на форуме Autodesk («Macro not using input») и руководства PowerMill:
+#   EDIT TPPAGE SWFeedSpeed
+#   EDIT RPM $rpm    EDIT FRATE $feed    EDIT PRATE $plunge    EDIT RSPEED '20000'
+#   EDIT PAR 'Stepover' $stepover      (EDIT PAR — из Macro Programming Guide)
 
 # Типы объектов, которые есть в любом PowerMill. Нужны как аварийный список,
 # если справка ещё не разобрана (тогда словарь пуст).
