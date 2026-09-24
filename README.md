@@ -170,6 +170,28 @@ start_download_models.bat  :: модели Ollama (~5 ГБ) — только д�
 | `scripts\prepare_pm_macros.bat` | макросы «PowerMill AI» внутрь PowerMill (пункт 28 меню) |
 | `scripts\show_reports.bat` | отчёты в блокноте — прочитать и скопировать (пункт 29 меню) |
 
+### Если Inventor-файл (.ipt) не импортируется в PowerMill
+
+Ошибка «**Inventor Interoperability Engine is currently unavailable. Try again**»
+(встречается как Error 81 / Ошибка 0) — известная проблема Autodesk, а не твоя
+ошибка: импорт `.ipt` делает отдельный компонент **Inventor Interoperability**,
+который НЕ ставится вместе с PowerMill.
+
+Лечение (по официальной статье Autodesk):
+
+1. зайди в свою учётную запись Autodesk: `manage.autodesk.com`;
+2. **Product Updates** (Обновления продуктов);
+3. скачай и поставь **Inventor Interoperability** нужной версии (для PowerMill
+   2026 — 2026);
+4. после установки `.ipt` открывается и в PowerMill, и в Manufacturing Data
+   Exchange Utility.
+
+Пока компонента нет — обычный рабочий путь: **Inventor → Сохранить как → STEP
+(.stp)**, затем импорт STEP в PowerMill. Для механообработки это даже лучше:
+STEP передаёт точные поверхности, а `.ipt` при конвертации разбивается на
+треугольники (`sdxOptWriteTrianglesToSecondaryFile:true` в логе конвертера),
+и PowerMill дольше считает траектории по такому «сетчатому» телу.
+
 ### Если не успеваешь прочитать вывод
 
 Диагностические пункты (23, 27, 28, 29) **всегда ждут нажатия клавиши** — окно

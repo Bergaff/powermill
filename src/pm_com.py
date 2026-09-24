@@ -84,20 +84,13 @@ def attach(progids: tuple[str, ...] = PROGIDS):
     Возвращает (объект, сообщение). Если PowerMill не запущен — объекта нет:
     запускать его сами не будем, это решение технолога.
     """
-    from src.power_mill_link import powermill_running
-
-    running = powermill_running()
-    if running is False:
-        message = ("PowerMill не запущен — подключаться не к чему. "
-                   "Запусти PowerMill с проектом и повтори.")
-        if _win32com is None:
-            message += " Мост pywin32 тоже не стоит: пункт 27 меню."
-        return None, message
-
     if _win32com is None:
         return None, ("pywin32 не установлен. Поставить: пункт 27 меню "
                       "(или pip install pywin32)")
 
+    # GetActiveObject присоединяется ТОЛЬКО к уже запущенной программе: если
+    # PowerMill закрыт, он не откроется (в отличие от Dispatch). Поэтому
+    # пробуем всегда, даже если проверка процессов не сработала.
     tried: list[str] = []
     for progid in progids:
         try:
@@ -105,8 +98,15 @@ def attach(progids: tuple[str, ...] = PROGIDS):
             return app, f"подключено к запущенному PowerMill через COM: {progid}"
         except Exception as error:  # noqa: BLE001
             tried.append(f"{progid}: {type(error).__name__}")
-    return None, ("запущенный PowerMill не отвечает как COM-сервер. Проверено: "
-                  + "; ".join(tried))
+
+    from src.power_mill_link import powermill_running
+
+    if powermill_running() is False:
+        return None, ("PowerMill не запущен — живое чтение невозможно. "
+                      "Открой PowerMill с проектом и запусти пункт 24 снова.")
+
+    return None, ("PowerMill запущен, но не отвечает как COM-сервер. "
+                  "Проверено: " + "; ".join(tried))
 
 
 # --------------------------------------------------------------------------

@@ -92,11 +92,19 @@ class NoCommandApp:
 # Присоединение
 # --------------------------------------------------------------------------
 def test_attach_does_not_start_powermill_when_not_running(monkeypatch):
+    """GetActiveObject ничего не запускает: нет PowerMill — нет подключения."""
+    class Nothing:
+        @staticmethod
+        def GetActiveObject(progid: str):
+            raise RuntimeError("MK_E_UNAVAILABLE")
+
+    monkeypatch.setattr(pm_com, "_win32com", Nothing)
     monkeypatch.setattr("src.power_mill_link.powermill_running", lambda: False)
+
     app, message = pm_com.attach()
     assert app is None
     assert "не запущен" in message
-    assert "Запусти PowerMill" in message
+    assert "пункт 24" in message
 
 
 def test_attach_uses_get_active_object(monkeypatch):
@@ -129,7 +137,25 @@ def test_attach_reports_when_com_class_missing(monkeypatch):
 
     app, message = pm_com.attach()
     assert app is None
-    assert "COM-сервер" in message or "не отвечает" in message
+    assert "не отвечает" in message
+
+
+def test_attach_tries_progids_in_order(monkeypatch):
+    seen: list[str] = []
+
+    class FakeCom:
+        @staticmethod
+        def GetActiveObject(progid: str):
+            seen.append(progid)
+            if progid == "PowerMill.Application":
+                raise RuntimeError("нет")
+            return FakeApp()
+
+    monkeypatch.setattr(pm_com, "_win32com", FakeCom)
+    app, message = pm_com.attach()
+    assert app is not None
+    assert seen[:2] == ["PowerMill.Application", "PowerMILL.Application"]
+    assert "PowerMILL.Application" in message
 
 
 def test_attach_without_pywin32(monkeypatch):
@@ -299,7 +325,14 @@ def test_save_project_uses_pml_with_windows_slashes():
 # Готовые сценарии
 # --------------------------------------------------------------------------
 def test_refresh_context_without_powermill(monkeypatch):
+    class Nothing:
+        @staticmethod
+        def GetActiveObject(progid: str):
+            raise RuntimeError("MK_E_UNAVAILABLE")
+
+    monkeypatch.setattr(pm_com, "_win32com", Nothing)
     monkeypatch.setattr("src.power_mill_link.powermill_running", lambda: False)
+
     context, message = pm_com.refresh_context()
     assert context is None
     assert "не запущен" in message
