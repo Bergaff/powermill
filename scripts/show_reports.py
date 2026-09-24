@@ -27,6 +27,8 @@ KNOWN_REPORTS = (
     ("project_context.json", "Снимок проекта (пункт 24)"),
     ("pm_edit_report.txt", "Запись режимов резания в проект (пункт 30)"),
     ("pm_edit_result.txt", "Что записалось в проект: было → стало (макрос)"),
+    ("pm_operation_report.txt", "Черновая операция: что собралось (пункт 31)"),
+    ("pm_operation_result.txt", "Отчёт макроса операции по шагам (STEP)"),
     ("pm_project.txt", "Снимок проекта от макроса PowerMill (пункт 24)"),
     ("bat_check.txt", "Проверка батников (пункт 26)"),
     ("pml_vocabulary.txt", "Словарь PML из справки"),

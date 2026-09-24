@@ -60,6 +60,10 @@ KNOWN_PROGIDS = (
     "PMApplication.Application",
 )
 
+# Имена процессов PowerMill: pmill.exe — сама программа (поэтому «powermill»
+# в имени не всегда есть), рядом PowerMill.exe / PowerMillModeling.exe.
+POWERMILL_PROCESS_HINTS = ("powermill", "pmill")
+
 # Макрос-разведчик: печатает в окно сообщений PowerMill сведения о проекте и
 # версии. Пользователь запускает его руками — это проверяет, что макросы
 # вообще исполняются, и показывает, что именно видит PML.
@@ -247,18 +251,48 @@ def find_pm_executables(dirs: list[Path]) -> list[str]:
 
 
 def powermill_running() -> bool | None:
-    """Запущен ли PowerMill сейчас. None — не смогли проверить."""
+    """Запущен ли PowerMill сейчас. None — не смогли проверить.
+
+    Почему два способа. Первый — посмотреть процессы, но имена разные:
+    `pmill.exe` (сама PowerMill), `PowerMill.exe`, `PowerMillModeling.exe`.
+    Если по имени ничего не нашли, всё равно есть шанс ошибиться, поэтому
+    второй способ — спросить сам COM-объект: отвечает значит работает.
+    На живом PowerMill в отчёте пользователя было «не запущен», хотя проект
+    читался — именно из-за имени процесса.
+    """
     try:
         import psutil
     except ImportError:
+        psutil = None
+    if psutil is not None:
+        try:
+            for proc in psutil.process_iter(["name"]):
+                name = (proc.info.get("name") or "").lower()
+                if any(hint in name for hint in POWERMILL_PROCESS_HINTS):
+                    return True
+        except Exception:  # noqa: BLE001
+            psutil = None
+    return com_object_alive()
+
+
+def com_object_alive() -> bool | None:
+    """Отвечает ли COM-объект PowerMill (то есть запущена ли программа).
+
+    GetActiveObject ничего не запускает: он только спрашивает уже работающий
+    объект. None — проверить нельзя (не Windows или нет pywin32).
+    """
+    if os.name != "nt":
         return None
     try:
-        for proc in psutil.process_iter(["name"]):
-            name = (proc.info.get("name") or "").lower()
-            if "powermill" in name:
-                return True
-    except Exception:  # noqa: BLE001
+        import win32com.client
+    except ImportError:
         return None
+    for progid in KNOWN_PROGIDS:
+        try:
+            win32com.client.GetActiveObject(progid)
+            return True
+        except Exception:  # noqa: BLE001
+            continue
     return False
 
 

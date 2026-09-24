@@ -46,15 +46,32 @@ TRUE FALSE NULL AND OR NOT IN
 STRING REAL INT INTEGER OBJECT BOOLEAN LIST PRINT MESSAGE FORMAT
 SET GET ADD REMOVE APPEND CLEAR LOCK UNLOCK RESET LOCALVARS
 ABORT EXIT STOP PAUSE PING TRACEFILE EXECUTE DOCOMMAND
-FILE OPEN CLOSE READ WRITE TO AS FROM APPEND DELETE INPUT CHOICE QUERY
+FILE OPEN CLOSE READ WRITE TO AS FROM FOR APPEND DELETE INPUT CHOICE QUERY
 INFO WARN CRLF OLE FILEACTION DIALOGS ON OFF
-RPM FRATE PRATE RSPEED TPPAGE PAR
+RPM FRATE PRATE RSPEED TPPAGE PAR BLOCK
+TEMPLATE TMPLTSELECTORGUI DIAMETER NUMBER COMMANDFROMUI COORDINATE WORLD
+RESETLIMIT ZMAX SAFEAREA CALCULATE CALCULATE_DIMENSIONS LEADS LEADIN RAMP
+UNDRAW REAPPLYFROMGUI SPIRAL
 """.split())
 # RPM / FRATE / PRATE / RSPEED / TPPAGE / PAR — слова команды EDIT из рабочего
 # макроса на форуме Autodesk («Macro not using input») и руководства PowerMill:
 #   EDIT TPPAGE SWFeedSpeed
 #   EDIT RPM $rpm    EDIT FRATE $feed    EDIT PRATE $plunge    EDIT RSPEED '20000'
 #   EDIT PAR 'Stepover' $stepover      (EDIT PAR — из Macro Programming Guide)
+# TPPAGE/CALCULATE/SAFEAREA/LEADS/LEADIN/RAMP/UNDRAW/TEMPLATE/TMPLTSELECTORGUI/
+# DIAMETER/NUMBER/COMMANDFROMUI/COORDINATE/WORLD/RESETLIMIT/ZMAX — слова из тех же
+# рабочих макросов Autodesk (создание инструмента, заготовка, шаблон стратегии,
+# безопасная зона, подводы, расчёт и снятие отрисовки).
+# BLOCK — заготовка PowerMill: `EDIT BLOCK RESET`, `EDIT BLOCK RESETLIMIT`,
+# `EDIT BLOCK ZMAX` — из рабочих макросов форума Autodesk.
+
+# Слова, которые наш макрос ПРОБУЕТ и проверяет сам: тип инструмента подтверждён
+# только для DRILL (`CREATE TOOL ; DRILL`), поэтому фрезу пробуем несколькими
+# словами и смотрим, после какого число инструментов в проекте выросло. Такие
+# строки валидатор не считает ошибкой, но и не подтверждает — он кладёт их в
+# отдельный список `tries` (макрос отчитывается о результате сам).
+TRY_WORDS = frozenset({"END_MILL", "ENDMILL", "END"})
+TRY_RE = re.compile(r"\b(" + "|".join(sorted(TRY_WORDS)) + r")\b")
 
 # Типы объектов, которые есть в любом PowerMill. Нужны как аварийный список,
 # если справка ещё не разобрана (тогда словарь пуст).
@@ -265,6 +282,7 @@ def validate(code: str, vocab: dict | None = None) -> dict:
     foreign_upper: list[tuple[int, str]] = []
     case_errors: list[tuple[int, str]] = []
     bad_arity: list[tuple[int, str]] = []
+    tries: list[tuple[int, str]] = []
 
     in_block_comment = False
     for number, raw in enumerate(code.splitlines(), 1):
@@ -280,6 +298,12 @@ def validate(code: str, vocab: dict | None = None) -> dict:
             continue
         if line.startswith("//") or line.startswith("#"):
             continue
+        # строки с пробными словами (перебор типа инструмента) не проверяем:
+        # их результат макрос сам пишет в отчёт
+        if TRY_RE.search(raw):
+            tries.append((number, raw))
+            continue
+
         # код без строковых литералов — чтобы не ловить слова из сообщений
         stripped = TYPE_RE.sub('""', line)
 
@@ -327,6 +351,7 @@ def validate(code: str, vocab: dict | None = None) -> dict:
         "case_errors": case_errors,
         "bad_arity": bad_arity,
         "foreign_upper": foreign_upper,
+        "tries": tries,
         "entities_known": len(vocab.get("entities", [])),
         "parameters_known": len(vocab.get("parameters", [])),
     }
@@ -342,6 +367,11 @@ def format_check(report: dict) -> str:
     if report["ok"]:
         lines.append("   ✅ подозрительных строк не найдено: все типы объектов "
                      "и команды есть в документации")
+        if report.get("tries"):
+            lines.append("   ℹ️ пробные строки (макрос проверит их сам "
+                         "в PowerMill и отчитается):")
+            for number, line in report["tries"][:4]:
+                lines.append(f"      строка {number}: {line.strip()}")
         if report.get("foreign_upper"):
             lines.append("   ℹ️ проверь вручную (не найдено в словаре):")
             for number, line in report["foreign_upper"][:5]:
