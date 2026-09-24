@@ -42,13 +42,14 @@ echo     22  -  Переключить ИИ: локальный (Ollama) или 
 echo     23  -  Проверить связь с PowerMill (что доступно для плагина/приложения)
 echo     24  -  Загрузить снимок проекта PowerMill (ассистент узнает твои имена)
 echo     25  -  Подготовить плагин PowerMill (найти каркас и инструменты сборки)
+echo     26  -  Починить батники (если окно закрылось или сыпет ошибки)
 echo.
 echo      0  -  Выход
 echo.
 echo   Внутри любых экранов слово  «назад»  или  «меню»
 echo   возвращает к этому списку.
 echo.
-set /p choice="   Выбор (0-25): "
+set /p choice="   Выбор (0-26): "
 
 if "%choice%"=="1"  goto chat
 if "%choice%"=="2"  goto search
@@ -75,6 +76,7 @@ if "%choice%"=="22" goto switchai
 if "%choice%"=="23" goto pmlink
 if "%choice%"=="24" goto project
 if "%choice%"=="25" goto plugin
+if "%choice%"=="26" goto repair
 if "%choice%"=="0"  exit /b 0
 if /i "%choice%"=="назад" exit /b 0
 if /i "%choice%"=="меню" goto menu
@@ -154,6 +156,10 @@ goto menu
 
 :api
 call "%~dp0scripts\setup_api.bat"
+goto menu
+
+:repair
+call "%~dp0scripts\repair_bats.bat"
 goto menu
 
 :project

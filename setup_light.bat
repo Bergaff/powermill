@@ -17,34 +17,24 @@ echo =========================================================
 echo.
 
 where python >nul 2>nul
-if errorlevel 1 (
-    echo [!] Python не найден!
-    echo     Установи с https://www.python.org/downloads/
-    echo     При установке отметь "Add Python to PATH".
-    echo.
-    pause
-    exit /b 1
-)
+if errorlevel 1 goto no_python
 
 echo [1/3] Виртуальное окружение...
-if not exist "venv\Scripts\python.exe" (
-    python -m venv venv
-) else (
-    echo       venv уже есть - пропускаю
-)
+if exist "venv\Scripts\python.exe" goto have_venv
+python -m venv venv
+goto venv_ready
+
+:have_venv
+echo       venv уже есть - пропускаю
+
+:venv_ready
 call venv\Scripts\activate
 
 echo.
 echo [2/3] Ставлю лёгкие библиотеки (beautifulsoup4, tqdm, psutil, pytest)...
 python -m pip install --upgrade pip --quiet
 pip install --quiet beautifulsoup4 tqdm psutil pytest
-if errorlevel 1 (
-    echo.
-    echo [!] Не удалось установить. Проверь интернет и повтори.
-    echo.
-    pause
-    exit /b 1
-)
+if errorlevel 1 goto pip_failed
 
 echo.
 echo [3/3] Проверяю...
@@ -53,12 +43,27 @@ python -c "import bs4, tqdm, psutil; print('   библиотеки на мес�
 echo.
 echo =========================================================
 echo   ГОТОВО. Дальше по шагам:
-echo     1) start_menu.bat  ->  пункт 9   (что лежит в справке)
-echo     2) start_menu.bat  ->  пункт 4   (разобрать справку)
-echo     3) start_menu.bat  ->  пункт 2   (поиск по справке)
-echo     4) start_menu.bat  ->  пункт 3   (режимы резания)
-echo.
-echo   Для ответов ИИ позже: setup.bat (полная установка)
+echo     1) start_menu.bat  -^>  пункт 9   (что лежит в справке)
+echo     2) start_menu.bat  -^>  пункт 4   (разобрать справку)
+echo     3) start_menu.bat  -^>  пункт 2   (поиск по справке)
+echo     4) start_menu.bat  -^>  пункт 3   (режимы резания)
 echo =========================================================
 echo.
 pause
+exit /b 0
+
+:no_python
+echo [!] Python не найден!
+echo     Установи с https://www.python.org/downloads/
+echo     При установке отметь "Add Python to PATH".
+echo.
+pause
+exit /b 1
+
+:pip_failed
+echo.
+echo [!] Не удалось установить библиотеки. Проверь интернет и повтори.
+echo     Если ошибка про SSL или прокси - проверь настройки сети.
+echo.
+pause
+exit /b 1
