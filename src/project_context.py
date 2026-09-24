@@ -22,6 +22,8 @@
 """
 from __future__ import annotations
 
+from src import pml_files
+
 import json
 import re
 import time
@@ -298,7 +300,7 @@ def main() -> int:
         print("    Вставь вывод макроса разведки в этот файл (пункт 24 меню).")
         return 2
 
-    context = parse_dump(path.read_text(encoding="utf-8", errors="replace"))
+    context = parse_dump(pml_files.read(path))
     if context.get("_total", 0) == 0:
         print("(!) В тексте не нашлось ни одного объекта проекта.")
         print("    Скопируй строки между «POWERMILL AI PROBE START» и «…END».")

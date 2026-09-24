@@ -23,7 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src import project_context                      # noqa: E402
+from src import pml_files, project_context                      # noqa: E402
 from src.applog import start_log                     # noqa: E402
 
 TEMPLATE = """PowerMill AI — снимок проекта
@@ -121,7 +121,7 @@ def read_macro_file() -> tuple[dict | None, str]:
         return None, f"файла нет ({path})"
 
     age_minutes = (time.time() - path.stat().st_mtime) / 60
-    text = path.read_text(encoding="utf-8", errors="replace")
+    text = pml_files.read(path)
     context = project_context.parse_dump(text)
     if not context.get("_total", 0):
         return None, f"в файле нет объектов ({path})"
@@ -205,7 +205,7 @@ def main() -> int:
 
     open_editor(project_context.DUMP_FILE)
 
-    text = project_context.DUMP_FILE.read_text(encoding="utf-8", errors="replace")
+    text = pml_files.read(project_context.DUMP_FILE)
     context = project_context.parse_dump(text)
     if context.get("_total", 0) == 0:
         print()

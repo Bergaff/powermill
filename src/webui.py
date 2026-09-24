@@ -18,6 +18,8 @@
 """
 from __future__ import annotations
 
+from src import pml_files
+
 import contextlib
 import io
 import json
@@ -296,7 +298,7 @@ def read_report(name: str) -> dict:
     path = safe_report_path(name)
     if path is None or not path.is_file():
         return {"name": name, "text": "", "error": "нет такого файла"}
-    text = path.read_text(encoding="utf-8", errors="replace")
+    text = pml_files.decode(path.read_bytes())
     if len(text) > 200_000:
         text = text[:200_000] + "\n…(файл показан не весь)"
     return {"name": name, "text": text, "size": path.stat().st_size}

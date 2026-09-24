@@ -47,6 +47,8 @@ PML-макрос, показывает его тебе ДО запуска, вы
 """
 from __future__ import annotations
 
+from src import pml_files
+
 import re
 import shutil
 import time
@@ -150,7 +152,8 @@ def edit_macro(edits: list[SpeedFeed], result_file: Path | str = RESULT_FILE,
         "",
         f"STRING $pm_result_file = '{out_file}'",
         "FILE OPEN $pm_result_file FOR WRITE AS out",
-        'FILE WRITE "PM_EDIT_RESULT" TO out',
+        'STRING $pm_tag = "PM_EDIT_RESULT"',
+        "FILE WRITE $pm_tag TO out",
         "",
         "INT $pm_ok = 0",
         "INT $pm_total = 0",
@@ -241,8 +244,7 @@ def write_macro(edits: list[SpeedFeed], path: Path | str = EDIT_FILE,
     """Пишет макрос правки (windows-переводы строк, как у макросов PowerMill)."""
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    text = edit_macro(edits, result_file=result_file).replace("\n", "\r\n")
-    target.write_bytes(text.encode("utf-8"))
+    pml_files.write(target, edit_macro(edits, result_file=result_file))
     return target
 
 
@@ -299,7 +301,7 @@ def last_results(path: Path | str = RESULT_FILE) -> tuple[list[EditResult], str]
     file = Path(path)
     if not file.exists():
         return [], f"файла ещё нет ({file})"
-    text = file.read_text(encoding="utf-8", errors="replace")
+    text = pml_files.read(file)
     results = parse_result(text)
     age = time.time() - file.stat().st_mtime
     if age > 3600:

@@ -16,6 +16,8 @@
 """
 from __future__ import annotations
 
+from src import pml_files
+
 import json
 import time
 from pathlib import Path
@@ -72,7 +74,9 @@ def write_answer(text: str, path: Path | None = None) -> Path:
     """Пишет ответ для макроса (в кодировке, которую прочитает PML)."""
     target = Path(path or ANSWER_FILE)
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(text, encoding="utf-8")
+    # PowerMill читает файл в системной кодировке — пишем CP1251,
+    # иначе русский ответ в окне PowerMill выглядит как «РѕС‚РІРµС‚»
+    pml_files.write(target, text)
     return target
 
 
@@ -146,7 +150,7 @@ def handle(path: Path | None = None, ai=None, verbose: bool = True) -> int:
         print("    Запрос создаёт макрос PM_AI_ASK.mac внутри PowerMill.")
         return 2
 
-    raw = request_path.read_text(encoding="utf-8", errors="replace")
+    raw = pml_files.read(request_path)
     request = parse_request(raw)
     if not request["query"] or request["query"] == "(пустой запрос)":
         write_answer("Пустой запрос.\n\nЗапусти макрос PM_AI_ASK.mac заново "

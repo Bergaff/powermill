@@ -10,7 +10,7 @@ from __future__ import annotations
 import config
 
 from scripts import check_pm_api
-from src import pm_macro
+from src import pml_files, pm_macro
 
 
 def test_install_probe_macro_regenerates_stale_copy(tmp_path, monkeypatch):
@@ -26,13 +26,13 @@ def test_install_probe_macro_regenerates_stale_copy(tmp_path, monkeypatch):
     copied = check_pm_api.install_probe_macro()
 
     assert copied == [pm_folder / "PM_PROBE.mac"]
-    fresh = stale.read_text(encoding="utf-8")
+    fresh = pml_files.read(stale)
     assert "FILE OPEN" in fresh                      # макрос пересобран
     assert "RESET LOCALVARS" in fresh
     assert "старый макрос" not in fresh
     # путь к снимку — абсолютный и с прямыми слэшами
     assert str(tmp_path / "pm_project.txt").replace("\\", "/") in fresh
-    assert (pm_folder / "PM_PROBE.mac").read_text(encoding="utf-8") == fresh
+    assert pml_files.read(pm_folder / "PM_PROBE.mac") == fresh
 
 
 def test_install_probe_macro_survives_no_folders(tmp_path, monkeypatch):

@@ -28,6 +28,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from src import pml_files
 
 # Где обычно стоит PowerMill и его библиотеки
 INSTALL_HINTS = (
@@ -132,14 +133,16 @@ def probe_macro(output_file: Path | str | None = None) -> str:
         "PRINT $pmout_head",
         "",
         "FILE OPEN $pmout_file FOR WRITE AS out",
-        'FILE WRITE "--- POWERMILL AI PROBE START ---" TO out',
+        'STRING $pms_start = "--- POWERMILL AI PROBE START ---"',
+        "FILE WRITE $pms_start TO out",
         "",
-        'PRINT "--- POWERMILL AI PROBE START ---"',
+        "PRINT $pms_start",
     ]
     for header, folder in PROBE_SECTIONS:
         body.append("")
-        body.append(f'PRINT "{header}"')
-        body.append(f'FILE WRITE "{header}" TO out')
+        body.append(f'STRING $pms_head = "{header}"')
+        body.append("PRINT $pms_head")
+        body.append("FILE WRITE $pms_head TO out")
         body.append(f'FOREACH $item IN FOLDER("{folder}") {{')
         body.append("    PRINT $item.name")
         body.append("    FILE WRITE $item.name TO out")
@@ -147,8 +150,9 @@ def probe_macro(output_file: Path | str | None = None) -> str:
 
     body += [
         "",
-        'PRINT "--- POWERMILL AI PROBE END ---"',
-        'FILE WRITE "--- POWERMILL AI PROBE END ---" TO out',
+        'STRING $pms_end = "--- POWERMILL AI PROBE END ---"',
+        "PRINT $pms_end",
+        "FILE WRITE $pms_end TO out",
         "FILE CLOSE out",
         "",
         "// Проверка: читаем файл обратно. Это доказательство, что снимок есть,",
@@ -174,7 +178,8 @@ def probe_macro(output_file: Path | str | None = None) -> str:
         '$pmout_msg = $pmout_msg + "Первая строка: " + $pmout_first + crlf + crlf',
         '$pmout_msg = $pmout_msg + "Дальше: запусти пункт 24 меню — ассистент разберёт этот файл."',
         "IF $pmout_count == 0 {",
-        '    PRINT "[ОШИБКА] Файл снимка пустой — пришли этот текст в чат."',
+        '    STRING $pmout_bad = "[ОШИБКА] Файл снимка пустой — пришли этот текст в чат."',
+        "    PRINT $pmout_bad",
         '    $pmout_msg = $pmout_msg + crlf + "ФАЙЛ НЕ ЗАПИСАЛСЯ (0 строк). Пришли этот текст в чат."',
         "    MESSAGE WARN $pmout_msg",
         "} ELSE {",
@@ -536,8 +541,7 @@ def write_probe_macro(folder: Path) -> Path:
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / "PM_PROBE.mac"
     target = folder / "pm_project.txt"
-    text = probe_macro(target).replace("\n", "\r\n")
-    path.write_bytes(text.encode("utf-8"))
+    pml_files.write(path, probe_macro(target))
     return path
 
 

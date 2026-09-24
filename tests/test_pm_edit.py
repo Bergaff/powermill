@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src import pm_edit, pml_vocab
+from src import pml_files, pm_edit, pml_vocab
 
 VOCAB = {"entities": ["model", "boundary", "tool", "toolpath", "workplane",
                       "ncprogram", "stockmodel", "pattern"], "parameters": []}
@@ -73,7 +73,7 @@ def test_write_macro_uses_windows_line_endings(tmp_path):
     assert b"\r\n" in data
     assert b"\n" not in data.replace(b"\r\n", b"")
     assert str(tmp_path / "pm_edit_result.txt").replace("\\", "/") in \
-        data.decode("utf-8")
+        pml_files.decode(data)
 
 
 def test_preview_shows_assignments():

@@ -30,6 +30,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from config import DATA_ROOT, OUTPUT_DIR
+from src import pml_files
 
 MACRO_DIR = OUTPUT_DIR / "pm_macros"
 REQUEST_FILE = OUTPUT_DIR / "pm_request.txt"
@@ -122,7 +123,8 @@ FILE CLOSE askq
 OLE FILEACTION 'OPEN' '{launcher}'
 
 // 5. Ждём технолога: он видит окно ассистента и нажимает RESUME
-MACRO PAUSE "Ассистент готовит ответ. Когда в окне ассистента появится 'Ответ готов', нажми RESUME."
+STRING $pm_wait_msg = "Ассистент готовит ответ. Когда в окне ассистента появится 'Ответ готов', нажми RESUME."
+MACRO PAUSE $pm_wait_msg
 
 // 6. Показываем ответ прямо в PowerMill
 STRING $ansfile = '{answer}'
@@ -157,42 +159,50 @@ STRING $pm_head = "Файл снимка: " + $outfile
 PRINT $pm_head
 FILE OPEN $outfile FOR WRITE AS out
 
-FILE WRITE "MODELS:" TO out
+STRING $pm_sec = "MODELS:"
+FILE WRITE $pm_sec TO out
 FOREACH $item IN FOLDER("Model") {{
     FILE WRITE $item.name TO out
 }}
 
-FILE WRITE "BOUNDARIES:" TO out
+STRING $pm_sec = "BOUNDARIES:"
+FILE WRITE $pm_sec TO out
 FOREACH $item IN FOLDER("Boundary") {{
     FILE WRITE $item.name TO out
 }}
 
-FILE WRITE "TOOLS:" TO out
+STRING $pm_sec = "TOOLS:"
+FILE WRITE $pm_sec TO out
 FOREACH $item IN FOLDER("Tool") {{
     FILE WRITE $item.name TO out
 }}
 
-FILE WRITE "TOOLPATHS:" TO out
+STRING $pm_sec = "TOOLPATHS:"
+FILE WRITE $pm_sec TO out
 FOREACH $item IN FOLDER("Toolpath") {{
     FILE WRITE $item.name TO out
 }}
 
-FILE WRITE "WORKPLANES:" TO out
+STRING $pm_sec = "WORKPLANES:"
+FILE WRITE $pm_sec TO out
 FOREACH $item IN FOLDER("Workplane") {{
     FILE WRITE $item.name TO out
 }}
 
-FILE WRITE "NC PROGRAMS:" TO out
+STRING $pm_sec = "NC PROGRAMS:"
+FILE WRITE $pm_sec TO out
 FOREACH $item IN FOLDER("NCProgram") {{
     FILE WRITE $item.name TO out
 }}
 
-FILE WRITE "STOCK MODELS:" TO out
+STRING $pm_sec = "STOCK MODELS:"
+FILE WRITE $pm_sec TO out
 FOREACH $item IN FOLDER("StockModel") {{
     FILE WRITE $item.name TO out
 }}
 
-FILE WRITE "PATTERNS:" TO out
+STRING $pm_sec = "PATTERNS:"
+FILE WRITE $pm_sec TO out
 FOREACH $item IN FOLDER("Pattern") {{
     FILE WRITE $item.name TO out
 }}
@@ -239,15 +249,18 @@ def test_macro() -> str:
     макрос читает файл и сравнивает. Если текст не изменился — программа не
     запустилась. Никаких проверок существования файла, которых нет в PML.
 
-    Вторая задача макроса — диагностика. 24.09 на живом PowerMill макрос
-    останавливался в районе записи файла, и по логу консоли было непонятно, на
-    каком именно шаге. Поэтому теперь каждый шаг оставляет свой файл
-    (pm_trace_1.txt … pm_trace_5.txt) и печатает короткую строку «powermill ai:
-    шаг N ок». Последняя отметка = последний работающий шаг, а следующая строка
-    макроса — та самая проблемная команда.
+    Вторая задача макроса — диагностика. На живом PowerMill 2026 макрос
+    останавливался на записи в файл, и по логу консоли было непонятно, на каком
+    именно шаге. Поэтому каждый шаг оставляет свой файл (pm_trace_1.txt …
+    pm_trace_5.txt) и печатает короткую строку «powermill ai: шаг N ок».
+    Последняя отметка = последний работающий шаг, а следующая строка макроса —
+    та самая проблемная команда.
 
-    Дескрипторы файлов у каждого шага свои (tf1, tf2, tk1…tk5): если прошлый
-    запуск оборвался и оставил файл открытым, новый запуск всё равно пройдёт.
+    Третье правило живого PowerMill: **в FILE WRITE (и PRINT, и MACRO PAUSE)
+    уходит только переменная**. Строка `FILE WRITE "WAIT" TO tf1` с текстом в
+    кавычках дала «недопустимый элемент или команда» — во всех рабочих макросах
+    с форума Autodesk в FILE WRITE передаётся переменная. Поэтому текст сначала
+    присваивается строке, и уже она идёт в команду.
     """
     test_file = pml_path(TEST_FILE)
     launcher = _win_path(OUTPUT_DIR / "pm_test.bat")
@@ -267,79 +280,88 @@ RESET LOCALVARS
 
 // --- Шаг 1. Пишем файл из PowerMill ---
 STRING $f = '{test_file}'
-FILE OPEN $f FOR WRITE AS tf1
-FILE WRITE "WAIT" TO tf1
-FILE CLOSE tf1
+STRING $pm_text = "WAIT"
+FILE OPEN $f FOR WRITE AS tfile
+FILE WRITE $pm_text TO tfile
+FILE CLOSE tfile
 
 STRING $t1 = '{traces[0]}'
-FILE OPEN $t1 FOR WRITE AS tk1
-FILE WRITE "шаг 1: файл записан из PowerMill" TO tk1
-FILE CLOSE tk1
-STRING $m1 = "powermill ai: шаг 1 ок (запись файла)"
-PRINT $m1
+STRING $pm_mark = "шаг 1: файл записан из PowerMill"
+FILE OPEN $t1 FOR WRITE AS marka
+FILE WRITE $pm_mark TO marka
+FILE CLOSE marka
+STRING $pm_m1 = "powermill ai: шаг 1 ок (запись файла)"
+PRINT $pm_m1
 
 // --- Шаг 2. Читаем его обратно ---
 STRING LIST $lines = {{}}
-FILE OPEN $f FOR READ AS tf2
-FILE READ $lines FROM tf2
-FILE CLOSE tf2
+FILE OPEN $f FOR READ AS tread
+FILE READ $lines FROM tread
+FILE CLOSE tread
 STRING $text = ""
 FOREACH $l IN $lines {{
     $text = $text + $l
 }}
 
 STRING $t2 = '{traces[1]}'
-FILE OPEN $t2 FOR WRITE AS tk2
-FILE WRITE $text TO tk2
-FILE CLOSE tk2
-STRING $m2 = "powermill ai: шаг 2 ок (чтение файла)"
-PRINT $m2
+FILE OPEN $t2 FOR WRITE AS markb
+FILE WRITE $text TO markb
+FILE CLOSE markb
+STRING $pm_m2 = "powermill ai: шаг 2 ок (чтение файла)"
+PRINT $pm_m2
 
 // --- Шаг 3. Запускаем внешнюю программу (наш .bat) ---
 STRING $launcher = '{launcher}'
 OLE FILEACTION 'OPEN' $launcher
 
 STRING $t3 = '{traces[2]}'
-FILE OPEN $t3 FOR WRITE AS tk3
-FILE WRITE "шаг 3: команда запуска внешней программы отправлена" TO tk3
-FILE CLOSE tk3
-PRINT "powermill ai: шаг 3 ок (запуск отправлен)"
+STRING $pm_mark3 = "шаг 3: команда запуска внешней программы отправлена"
+FILE OPEN $t3 FOR WRITE AS markc
+FILE WRITE $pm_mark3 TO markc
+FILE CLOSE markc
+STRING $pm_m3 = "powermill ai: шаг 3 ок (запуск отправлен)"
+PRINT $pm_m3
 
 // --- Шаг 4. Пауза: технолог видит тестовое окно и нажимает RESUME ---
-MACRO PAUSE "Открылось окно 'ТЕСТ МОСТА'? Нажми RESUME."
+STRING $pm_ask = "Открылось окно 'ТЕСТ МОСТА'? Нажми RESUME."
+MACRO PAUSE $pm_ask
 
 STRING $t4 = '{traces[3]}'
-FILE OPEN $t4 FOR WRITE AS tk4
-FILE WRITE "шаг 4: пауза пройдена (RESUME нажат)" TO tk4
-FILE CLOSE tk4
-PRINT "powermill ai: шаг 4 ок (пауза пройдена)"
+STRING $pm_mark4 = "шаг 4: пауза пройдена (RESUME нажат)"
+FILE OPEN $t4 FOR WRITE AS markd
+FILE WRITE $pm_mark4 TO markd
+FILE CLOSE markd
+STRING $pm_m4 = "powermill ai: шаг 4 ок (пауза пройдена)"
+PRINT $pm_m4
 
 // --- Шаг 5. Читаем файл ещё раз: программа должна была его перезаписать ---
 STRING LIST $after = {{}}
-FILE OPEN $f FOR READ AS tf5
-FILE READ $after FROM tf5
-FILE CLOSE tf5
+FILE OPEN $f FOR READ AS tfinal
+FILE READ $after FROM tfinal
+FILE CLOSE tfinal
 STRING $after_text = ""
 FOREACH $l IN $after {{
     $after_text = $after_text + $l
 }}
 
 STRING $t5 = '{traces[4]}'
-FILE OPEN $t5 FOR WRITE AS tk5
-FILE WRITE $after_text TO tk5
-FILE CLOSE tk5
+FILE OPEN $t5 FOR WRITE AS marke
+FILE WRITE $after_text TO marke
+FILE CLOSE marke
 
-STRING $m3 = "powermill ai: шаг 5, содержимое после программы: " + $after_text
-PRINT $m3
+STRING $pm_m5 = "powermill ai: шаг 5, содержимое после программы: " + $after_text
+PRINT $pm_m5
 
 IF $after_text == $text {{
-    MESSAGE WARN "МОСТ РАБОТАЕТ ЧАСТИЧНО: PowerMill пишет и читает файлы, но внешняя программа не запустилась или не перезаписала файл. Проверь, что pm_test.bat открывается двойным кликом, и посмотри pm_trace_3.txt (пункт 29 меню)."
-    PRINT "[4/4] Запуск внешней программы: НЕ РАБОТАЕТ"
-    STRING $m5 = "Файл-запускатель: " + $launcher
-    PRINT $m5
+    STRING $pm_warn = "МОСТ РАБОТАЕТ ЧАСТИЧНО: PowerMill пишет и читает файлы, но внешняя программа не запустилась или не перезаписала файл. Проверь, что pm_test.bat открывается двойным кликом, и посмотри pm_trace_3.txt (пункт 29 меню)."
+    MESSAGE WARN $pm_warn
+    STRING $pm_no = "Шаг 5: запуск внешней программы НЕ РАБОТАЕТ. Файл-запускатель: " + $launcher
+    PRINT $pm_no
 }} ELSE {{
-    MESSAGE INFO "МОСТ РАБОТАЕТ ПОЛНОСТЬЮ: PowerMill записал файл, прочитал его, запустил внешнюю программу, и она ответила. Теперь можно запускать PM_AI_ASK.mac — ассистент внутри PowerMill."
-    PRINT "[4/4] Запуск внешней программы: РАБОТАЕТ"
+    STRING $pm_ok = "МОСТ РАБОТАЕТ ПОЛНОСТЬЮ: PowerMill записал файл, прочитал его, запустил внешнюю программу, и она ответила. Теперь можно запускать PM_AI_ASK.mac — ассистент внутри PowerMill."
+    MESSAGE INFO $pm_ok
+    STRING $pm_m6 = "powermill ai: шаг 5 ок (внешняя программа ответила)"
+    PRINT $pm_m6
 }}
 """
 
@@ -395,14 +417,13 @@ def write_all(folder: Path | None = None) -> list[Path]:
     folder.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
 
+    # CP1251 и CRLF — так PowerMill читает русский текст без «кракозябр»
     for name, text in (("PM_AI_ASK.mac", ask_macro()),
                        ("PM_AI_SNAPSHOT.mac", snapshot_macro()),
                        ("PM_AI_TEST.mac", test_macro())):
-        path = folder / name
-        # макросы PowerMill ждут обычные переводы строк
-        path.write_bytes(text.replace("\n", "\r\n").encode("utf-8"))
-        written.append(path)
+        written.append(pml_files.write(folder / name, text))
 
+    # батники — наоборот: UTF-8 (у них `chcp 65001`) и тоже CRLF
     Path(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
     for name, text in launchers().items():
         path = OUTPUT_DIR / name

@@ -67,6 +67,8 @@
 """
 from __future__ import annotations
 
+from src import pml_files
+
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -132,7 +134,8 @@ def build_macro(plan: OperationPlan, result_file: Path | str = RESULT_FILE,
         "",
         f"STRING $pm_res = '{out_file}'",
         "FILE OPEN $pm_res FOR WRITE AS out",
-        'FILE WRITE "PM_OPERATION_RESULT" TO out',
+        'STRING $pm_tag = "PM_OPERATION_RESULT"',
+        "FILE WRITE $pm_tag TO out",
         "",
         'STRING $pm_head = "PowerMill AI: собираю операцию " + "'
         + plan.toolpath_name + '"',
@@ -327,8 +330,7 @@ def write_macro(plan: OperationPlan, path: Path | str = MACRO_FILE,
     """Пишет макрос (windows-переводы строк, как у макросов PowerMill)."""
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    text = build_macro(plan, result_file=result_file).replace("\n", "\r\n")
-    target.write_bytes(text.encode("utf-8"))
+    pml_files.write(target, build_macro(plan, result_file=result_file))
     return target
 
 
@@ -399,7 +401,7 @@ def last_result(path: Path | str = RESULT_FILE) -> tuple[list[tuple[str, str, st
     file = Path(path)
     if not file.exists():
         return [], f"файла ещё нет ({file})"
-    steps = parse_result(file.read_text(encoding="utf-8", errors="replace"))
+    steps = parse_result(pml_files.read(file))
     age = time.time() - file.stat().st_mtime
     if age > 3600:
         when = time.strftime("%d.%m %H:%M", time.localtime(file.stat().st_mtime))

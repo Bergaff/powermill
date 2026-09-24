@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from src import pm_bridge, pm_macro, pml_vocab
+from src import pml_files, pm_bridge, pm_macro, pml_vocab
 
 
 @pytest.fixture
@@ -84,7 +84,8 @@ def test_macros_have_no_unproven_commands():
 def test_test_macro_checks_launch_by_comparing_content():
     """Запуск программы проверяется сравнением содержимого файла, а не EXISTS()."""
     code = pm_macro.test_macro()
-    assert "FILE WRITE \"WAIT\" TO tf1" in code
+    assert 'STRING $pm_text = "WAIT"' in code
+    assert "FILE WRITE $pm_text TO tfile" in code
     assert "IF $after_text == $text" in code
     assert "EXISTS(FILEOPEN" not in code          # такой функции в PML нет
     assert "OLE FILEACTION 'OPEN' $launcher" in code
@@ -93,28 +94,57 @@ def test_test_macro_checks_launch_by_comparing_content():
 def test_test_macro_marks_every_step_with_its_own_file():
     """Каждый шаг оставляет свой файл: по последнему видно, где макрос встал.
 
-    24.09 на живом PowerMill макрос остановился в районе записи файла, и по
-    логу консоли нельзя было понять, на каком именно шаге. Теперь шаг 1..5
-    отмечается файлами pm_trace_1.txt … pm_trace_5.txt (открыть — пункт 29).
+    На живом PowerMill макрос остановился на записи в файл, и по логу консоли
+    нельзя было понять, на каком именно шаге. Теперь шаг 1..5 отмечается файлами
+    pm_trace_1.txt … pm_trace_5.txt (открыть — пункт 29), а в окне печатаются
+    строки «powermill ai: шаг N ок».
     """
     code = pm_macro.test_macro()
     for path in pm_macro.trace_files():
         assert pm_macro.pml_path(path) in code, path
     for index in range(1, 6):
-        assert f"FILE OPEN $t{index} FOR WRITE AS tk{index}" in code
-        assert f"FILE CLOSE tk{index}" in code
-        assert f"powermill ai: шаг {index}" in code.lower().replace(
-            "шаг 1 ок", "шаг 1").replace("шаг 2 ок", "шаг 2")
+        assert f"powermill ai: шаг {index}" in code
 
 
 def test_test_macro_uses_fresh_file_handles():
-    """Дескрипторы файлов не повторяются: незакрытый файл прошлого запуска
-    не должен мешать новому запуску."""
+    """Дескрипторы файлов не повторяются и без цифр: незакрытый файл прошлого
+    запуска не мешает новому, а имена — как в рабочих макросах Autodesk."""
     code = pm_macro.test_macro()
     handles = [line.split()[-1] for line in code.splitlines()
                if line.startswith("FILE OPEN")]
     assert len(handles) == len(set(handles)), handles
-    assert "tf1" in handles and "tk5" in handles
+    assert "tfile" in handles and "marka" in handles and "marke" in handles
+    assert all(handle.isalpha() for handle in handles), handles
+
+
+def test_macro_text_never_goes_into_file_write_as_literal():
+    """Живое правило PowerMill: в FILE WRITE, PRINT и MACRO PAUSE — переменная.
+
+    На живом PowerMill 2026 строка `FILE WRITE "WAIT" TO tf1` дала ошибку
+    «недопустимый элемент или команда». Во всех рабочих макросах с форума
+    Autodesk в FILE WRITE передаётся переменная, поэтому текст сначала
+    присваивается строке. Этот тест не даст вернуть литерал обратно.
+    """
+    from src import pm_edit, pm_operation, power_mill_link
+
+    texts = (pm_macro.ask_macro(), pm_macro.snapshot_macro(), pm_macro.test_macro(),
+             power_mill_link.probe_macro("E:/powermill-ai/output/pm_project.txt"),
+             pm_operation.build_macro(pm_operation.OperationPlan(
+                 toolpath_name="Черновая", tool_name="D16", tool_diameter=16)),
+             pm_edit.edit_macro([pm_edit.SpeedFeed(toolpath="Черновая", spindle=4500,
+                                                   feed=1200, plunge=400)]))
+    checked = 0
+    for code in texts:
+        for line in code.splitlines():
+            stripped = line.strip()
+            if stripped.startswith(("//", ";")):
+                continue
+            for command in ("FILE WRITE", "PRINT", "MACRO PAUSE"):
+                if stripped.startswith(command):
+                    argument = stripped[len(command):].strip()
+                    assert argument.startswith("$"), f"литерал в {command}: {stripped}"
+                    checked += 1
+    assert checked > 40, f"подозрительно мало проверенных строк: {checked}"
 
 
 def test_test_macro_passes_own_validator():
@@ -318,7 +348,7 @@ def test_handle_ask_mode_writes_answer(macro_env):
     pm_macro.REQUEST_FILE.write_text("MODE=0\nкак задать припуск\n", encoding="utf-8")
     rc = pm_bridge.handle(ai=FakeAI(), verbose=False)
     assert rc == 0
-    text = pm_macro.ANSWER_FILE.read_text(encoding="utf-8")
+    text = pml_files.read(pm_macro.ANSWER_FILE)
     assert "ОТВЕТ: как задать припуск" in text
     assert "PowerMill AI · режим: ask" in text
 
@@ -326,7 +356,7 @@ def test_handle_ask_mode_writes_answer(macro_env):
 def test_handle_macro_mode_strips_markdown_fences(macro_env):
     pm_macro.REQUEST_FILE.write_text("MODE=1\nграницы\n", encoding="utf-8")
     pm_bridge.handle(ai=FakeAI(), verbose=False)
-    text = pm_macro.ANSWER_FILE.read_text(encoding="utf-8")
+    text = pml_files.read(pm_macro.ANSWER_FILE)
     assert "```" not in text
     assert "PRINT \"ok\"" in text
 
@@ -336,7 +366,7 @@ def test_handle_cutting_works_without_ai(macro_env):
                                      encoding="utf-8")
     rc = pm_bridge.handle(verbose=False)          # ai=None: ИИ не нужен
     assert rc == 0
-    text = pm_macro.ANSWER_FILE.read_text(encoding="utf-8")
+    text = pml_files.read(pm_macro.ANSWER_FILE)
     assert "S (об/мин)" in text
 
 
@@ -344,7 +374,7 @@ def test_handle_empty_request(macro_env):
     pm_macro.REQUEST_FILE.write_text("MODE=0\n(пустой запрос)\n", encoding="utf-8")
     rc = pm_bridge.handle(ai=FakeAI(), verbose=False)
     assert rc == 3
-    assert "Пустой запрос" in pm_macro.ANSWER_FILE.read_text(encoding="utf-8")
+    assert "Пустой запрос" in pml_files.read(pm_macro.ANSWER_FILE)
 
 
 def test_handle_missing_request(macro_env):
@@ -354,7 +384,7 @@ def test_handle_missing_request(macro_env):
 
 def test_placeholder_is_written_before_work(macro_env):
     path = pm_bridge.write_placeholder()
-    text = Path(path).read_text(encoding="utf-8")
+    text = pml_files.read(path)
     assert "готовит ответ" in text
 
 

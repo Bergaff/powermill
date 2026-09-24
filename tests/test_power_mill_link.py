@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from src import pml_files
 from src import power_mill_link as link
 
 
@@ -128,7 +129,7 @@ def test_write_probe_macro(tmp_path):
     path = link.write_probe_macro(tmp_path)
     assert path.name == "PM_PROBE.mac"
     assert path.exists()
-    text = path.read_text(encoding="utf-8")
+    text = pml_files.read(path)
     assert "PROBE END" in text
     # путь к снимку берётся из переданной папки, а не из константы
     assert "pm_project.txt" in text
@@ -142,7 +143,9 @@ def test_probe_macro_writes_file_not_only_console():
     assert "FILE WRITE" in text
     assert "FILE CLOSE out" in text
     assert "MESSAGE INFO" in text                  # видимое окно в конце
-    assert 'FILE WRITE "MODELS:" TO out' in text
+    # в FILE WRITE идёт переменная: живой PowerMill не принимает литерал
+    assert 'STRING $pms_head = "MODELS:"' in text
+    assert "FILE WRITE $pms_head TO out" in text
     assert "STOCK MODELS:" in text and "PATTERNS:" in text
 
 
