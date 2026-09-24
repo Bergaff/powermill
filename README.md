@@ -44,7 +44,13 @@ C:\ProgramData\Autodesk\PowerMill\2026\Help\l.rus\
    6а. читает **справочник PML** из установки PowerMill
    (`E:\powermill 2026\PowerMill 2026\lib\locale\C`: папки `PARREF`, `PARSUM`,
    `DOC`, `HELP`, включая `.txt`/`.xml`) — описания параметров и команд PML;
-7. пишет `output\help_pages.jsonl`, `output\help_toc.txt`, `output\help_report.txt`,
+7. режет **гигантские страницы** (справочник параметров PML: `toolpath.html` —
+   575 000 символов) на части по заголовкам, иначе одна таблица вытесняла из
+   поиска статьи руководства;
+8. присваивает источникам приоритет: руководство (`files\`) → термины
+   (`contexthelp\`) → справочник параметров (`PARREF`) — теперь на «swarf»
+   первым идёт статья руководства, а не таблица параметров;
+9. пишет `output\help_pages.jsonl`, `output\help_toc.txt`, `output\help_report.txt`,
    а ход работы — в `output\logs\parse_help.log` (лог нужен, если окно закрылось).
 
 ## Команды (Уровень 1 — реализовано)

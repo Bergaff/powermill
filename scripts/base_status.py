@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import sys
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -47,6 +48,33 @@ def count_jsonl(path: Path) -> int:
             if line.strip():
                 n += 1
     return n
+
+
+def newest_mtime(path: Path) -> float:
+    """Самое свежее время изменения внутри папки (0.0, если пусто/нет папки)."""
+    if not path.exists():
+        return 0.0
+    newest = 0.0
+    for p in path.rglob("*"):
+        try:
+            newest = max(newest, p.stat().st_mtime)
+        except OSError:
+            continue
+    return newest
+
+
+def chroma_is_stale(state: dict) -> bool:
+    """Векторная база собрана ДО последнего разбора справки?"""
+    if not state or not state.get("finished_at"):
+        return False
+    chroma_mtime = newest_mtime(CHROMA_DIR)
+    if chroma_mtime <= 0:
+        return False                     # базы нет — отдельная проверка ниже
+    try:
+        parsed = datetime.strptime(state["finished_at"], "%Y-%m-%d %H:%M:%S").timestamp()
+    except (ValueError, KeyError):
+        return False
+    return chroma_mtime < parsed
 
 
 def read_state() -> dict:
@@ -128,6 +156,10 @@ def main() -> None:
     size_mb = folder_size_mb(CHROMA_DIR)
     if size_mb > 0.1:
         ok(f"Папка {CHROMA_DIR} — {size_mb:.1f} МБ")
+        if chroma_is_stale(state):
+            print("  [УСТАРЕЛА] Справка разобрана ПОСЛЕ сборки векторной базы:")
+            print("             ответы ИИ (/ask) не видят новые страницы.")
+            print("             -> пересобери: start_reindex_help.bat (пункт 6)")
     else:
         todo("Векторная база пуста",
              "запусти start_reindex_help.bat (или ночью start_night_indexing.bat)")
@@ -155,6 +187,9 @@ def main() -> None:
         steps.append("start_parse_help.bat              — собрать индекс поиска")
     if size_mb <= 0.1:
         steps.append("start_reindex_help.bat            — собрать векторную базу")
+    elif chroma_is_stale(state):
+        steps.append("start_reindex_help.bat            — пересобрать базу "
+                     "(справка новее, чем вектора)")
     if not steps:
         print("  Всё готово. Запускай start_work_chat.bat и задавай вопросы.")
         print("  Быстрый поиск без ИИ: start_help_search.bat")

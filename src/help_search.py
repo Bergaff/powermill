@@ -21,9 +21,14 @@ from config import HELP_SEARCH_DB, OUTPUT_DIR
 
 PAGES_FILE = OUTPUT_DIR / "help_pages.jsonl"
 
+# Штраф за «не-руководство» в результатах поиска (см. src/html_parser.py,
+# SOURCE_PRIORITY). Подобран так, чтобы статья руководства с 1 упоминанием
+# слова обходила гигантскую таблицу параметров с 50 упоминаниями.
+PRIORITY_PENALTY = 2.5
+
 # Версия схемы FTS-таблицы. При несовпадении индекс пересоздаётся автоматически
 # (данные берутся из help_pages.jsonl, потерять их нельзя).
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _TOKEN_RE = re.compile(r"[0-9A-Za-zА-Яа-яЁё_]{2,}")
 _STOPWORDS = {
@@ -79,7 +84,8 @@ class HelpSearch:
             conn = sqlite3.connect(str(self.db_path))
             _create = (
                 "CREATE VIRTUAL TABLE IF NOT EXISTS pages USING fts5("
-                "source, title, section, alias, contextid, kind UNINDEXED, body, "
+                "source, title, section, alias, contextid, "
+                "kind UNINDEXED, priority UNINDEXED, body, "
                 "tokenize=\"unicode61 remove_diacritics 2\")"
             )
             conn.execute(_create)
@@ -135,14 +141,15 @@ class HelpSearch:
                 " ; ".join(p.get("aliases") or []),
                 " ".join(p.get("contextids") or ([p["contextid"]] if p.get("contextid") else [])),
                 p.get("kind", "page"),
+                float(p.get("priority", 0.5)),
                 p.get("text", ""),
             )
             for p in pages
             if (p.get("text") or "").strip()
         ]
         conn.executemany(
-            "INSERT INTO pages (source, title, section, alias, contextid, kind, body) "
-            "VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO pages (source, title, section, alias, contextid, kind, "
+            "priority, body) VALUES (?,?,?,?,?,?,?,?)",
             rows,
         )
         conn.commit()
@@ -173,10 +180,16 @@ class HelpSearch:
         tokens = tokenize(query)
         if not tokens:
             return []
+        # Колонки: 0 source, 1 title, 2 section, 3 alias, 4 contextid, 6 body.
+        # Веса: заголовок раздела и термины важнее «сырого» текста.
+        weights = "1.0, 2.0, 1.6, 2.4, 2.2, 0.0, 0.0, 1.0"
+        # Штраф за источник: bm25 < 0 (лучше = отрицательнее), поэтому прибавляем
+        # priority: статья руководства (0.0) всегда выше справочника параметров (1.0).
         sql = (
-            "SELECT source, title, section, kind, "
-            "snippet(pages, 6, '«', '»', ' … ', 18) AS snip, bm25(pages) AS rank "
-            "FROM pages WHERE pages MATCH ? ORDER BY rank LIMIT ?"
+            f"SELECT source, title, section, kind, "
+            f"snippet(pages, 7, '«', '»', ' … ', 18) AS snip, "
+            f"bm25(pages, {weights}) + priority * {PRIORITY_PENALTY} AS rank "
+            f"FROM pages WHERE pages MATCH ? ORDER BY rank LIMIT ?"
         )
         # mode -> strict: строгий AND считаем надёжным попаданием,
         # OR/LIKE — «возможно релевантно» (используется в src.retrieval)

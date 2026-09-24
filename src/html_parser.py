@@ -82,6 +82,26 @@ DIR_PRIORITY = {
 
 STATE_FILE = OUTPUT_DIR / "help_parse_state.json"
 
+# Гигантские страницы справочника параметров PML (например, toolpath.html —
+# 575 000 символов, одна HTML-таблица параметров) нельзя держать одной записью:
+# в FTS они выигрывают у руководства просто из-за размера. Поэтому режем их
+# по заголовкам на части.
+MAX_PAGE_CHARS = 25_000
+
+# Приоритет источника в поиске: меньше = важнее (руководство пользователя
+# полезнее параметрического справочника при обычных вопросах).
+SOURCE_PRIORITY = {"page": 0.0, "contexthelp": 0.4, "pml": 1.0, "redirect": 0.6}
+
+# Названия папок справочника PML для человекочитаемых разделов
+PML_SECTIONS = {
+    "parref": "Справочник параметров PML",
+    "parsum": "Сводка параметров PML",
+    "doc": "Документация установки",
+    "help": "Справка установки",
+    "commands": "Команды PML",
+    "parameters": "Параметры PML",
+}
+
 # Порог «страница не пустая». 15 ловит короткие contexthelp-термины.
 MIN_TEXT_LEN = 15
 
@@ -188,6 +208,70 @@ def wrapped_candidates(root: Path, page: Path) -> list[Path]:
     return out
 
 
+_HEADING_RE = re.compile(r"^(#{1,3})\s+(.+)$")
+
+
+def split_page_text(text: str, max_chars: int = MAX_PAGE_CHARS) -> list[tuple[str, str]]:
+    """Режет длинный текст на части по заголовкам.
+
+    Возвращает [(подзаголовок, текст части), ...]. Для коротких текстов —
+    одна часть с пустым подзаголовком.
+    """
+    if len(text) <= max_chars:
+        return [("", text)]
+
+    parts: list[tuple[str, str]] = []
+    buffer: list[str] = []
+    size = 0
+    subtitle = ""
+
+    for line in text.split("\n"):
+        head = _HEADING_RE.match(line.strip())
+        is_section = bool(head) and len(head.group(1)) >= 2
+        # начинаем новую часть, если накопили достаточно и пошёл новый раздел
+        if is_section and size >= max_chars * 0.6 and buffer:
+            parts.append((subtitle, "\n".join(buffer).strip()))
+            buffer, size, subtitle = [], 0, ""
+        if is_section:
+            subtitle = head.group(2).strip()
+        buffer.append(line)
+        size += len(line) + 1
+        if size >= max_chars:
+            parts.append((subtitle, "\n".join(buffer).strip()))
+            # перекрытие по последним строкам, чтобы не терять контекст
+            tail = buffer[-3:]
+            buffer, size = list(tail), sum(len(x) + 1 for x in tail)
+
+    if buffer and "\n".join(buffer).strip():
+        parts.append((subtitle, "\n".join(buffer).strip()))
+    return [(t, p) for t, p in parts if p]
+
+
+def pml_section_and_title(root: Path, page: Path, text: str, title: str) -> tuple[str, str]:
+    """Раздел и заголовок для страниц справочника PML (PARREF/PARSUM/...)."""
+    try:
+        sub = page.relative_to(root).parts[0].lower()
+    except (ValueError, IndexError):
+        sub = ""
+    section = PML_SECTIONS.get(sub, "Справочник PowerMill")
+    stem = page.stem if page.suffix.lower() in ("", ".htm", ".html") else page.name
+    stem = stem.replace(".htm", "").replace(".html", "")
+    # общий <title> («PowerMill Parameter Reference») не различает страницы —
+    # берём первый осмысленный заголовок внутри, иначе имя файла
+    if not title or title.lower() in GENERIC_TITLE_MARKS or len(title) > 60:
+        # сначала подзаголовок (## — конкретный параметр/раздел), потом общий (#)
+        heading = (re.search(r"(?m)^##\s+(.+)$", text)
+                   or re.search(r"(?m)^#\s+(.+)$", text))
+        title = heading.group(1).strip() if heading else stem
+    return section, f"{title} ({stem})"
+
+
+GENERIC_TITLE_MARKS = {
+    "powermill parameter reference", "powermill parameter summary",
+    "help", "spravka", "parameter reference",
+}
+
+
 def _file_order(root: Path, path: Path) -> tuple[int, str]:
     """Ключ сортировки: сначала основные статьи, потом подсказки и служебное."""
     try:
@@ -240,7 +324,44 @@ def wrapped_html(root: Path, page: Path) -> dict:
     return {}
 
 
-def parse_page(root: Path, page: Path, toc_map: dict[str, dict]) -> dict | None:
+def parse_page(root: Path, page: Path, toc_map: dict[str, dict]) -> list[dict]:
+    """Одна страница справки -> список словарей.
+
+    Обычная страница даёт один элемент; гигантская (справочник параметров PML)
+    режется по заголовкам на части, чтобы одна таблица на 575 000 символов
+    не вытесняла руководство пользователя из результатов поиска.
+    """
+    single = _parse_page_single(root, page, toc_map)
+    if not single:
+        return []
+    if not single.get("text"):
+        return [single]
+
+    parts = split_page_text(single["text"])
+    if len(parts) == 1:
+        return [single]
+
+    total = len(parts)
+    result: list[dict] = []
+    for i, (subtitle, part_text) in enumerate(parts, 1):
+        item = dict(single)
+        item["text"] = part_text
+        item["text_chars"] = len(part_text)
+        item["part"] = i
+        item["parts_total"] = total
+        item["path"] = f"{single['path']}#part{i}"
+        item["source"] = f"{single['source']} (часть {i}/{total})"
+        if subtitle:
+            item["title"] = f"{single['title']} · {subtitle}"
+            if single.get("breadcrumb"):
+                item["breadcrumb"] = f"{single['breadcrumb']} · {subtitle}"
+            else:
+                item["breadcrumb"] = subtitle
+        result.append(item)
+    return result
+
+
+def _parse_page_single(root: Path, page: Path, toc_map: dict[str, dict]) -> dict | None:
     """Одна страница справки -> словарь. None, если текста нет."""
     stub = load_page(page)                      # .htm: заглушка, но с метаданными
     title, text = stub["title"], stub["text"]
@@ -296,18 +417,30 @@ def parse_page(root: Path, page: Path, toc_map: dict[str, dict]) -> dict | None:
     if toc_title and is_generic_title(title, page):
         title = toc_title
 
+    kind = page_kind(root, page)
+    section = " > ".join(toc_entry["breadcrumb"]) if toc_entry else ""
+
+    # Справочник PML (PARREF/PARSUM/POWMILLSYS...): у всех страниц один общий
+    # <title>, поэтому делаем человекочитаемый раздел и заголовок с именем файла
+    if kind == "pml":
+        section, title = pml_section_and_title(root, page, text, title)
+        crumb = f"{section} > {title}"
+    else:
+        crumb = crumb_title(toc_entry, title)
+
     return {
         "source": f"{root.name}/{rel}",
         "root": root.name,
         "path": rel,
         "lang": root.name,
-        "kind": page_kind(root, page),
+        "kind": kind,
         "title": title,
-        "breadcrumb": crumb_title(toc_entry, title),
-        "section": " > ".join(toc_entry["breadcrumb"]) if toc_entry else "",
+        "breadcrumb": crumb,
+        "section": section,
         "order": toc_entry["order"] if toc_entry else 10_000,
         "text_chars": len(text),
         "extracted_from": source_used,
+        "priority": SOURCE_PRIORITY.get(kind, 0.5),
         "redirect_to": redirect_to,
         "contextid": meta.get("contextid", ""),
         "topicid": meta.get("topicid", ""),
@@ -386,7 +519,7 @@ def parse_all_help(limit: int | None = None, lang: str | None = None,
 
     for root, path in tqdm(all_files, desc="Парсинг HTML"):
         try:
-            page = parse_page(root, path, toc_map)
+            parsed = parse_page(root, path, toc_map)
         except Exception as e:  # noqa: BLE001 — одна битая страница не должна ронять всё
             errors += 1
             if errors <= 5:
@@ -398,29 +531,30 @@ def parse_all_help(limit: int | None = None, lang: str | None = None,
         cell = stats.setdefault(key, [0, 0, 0])
         cell[0] += 1
 
-        if page is None:
+        if not parsed:
             empty += 1
             if len(empty_samples) < 6:
                 empty_samples.append(f"   {rel}")
             continue
 
-        if not page.get("text"):
-            # страница-редирект: текста нет, но есть заголовок термина
-            redirects.append(page)
-            continue
+        for page in parsed:
+            if not page.get("text"):
+                # страница-редирект: текста нет, но есть заголовок термина
+                redirects.append(page)
+                continue
 
-        digest = hashlib.md5(page["text"].encode("utf-8")).hexdigest()
-        if digest in seen_hashes:
-            duplicates += 1
-            continue
-        seen_hashes[digest] = rel
+            digest = hashlib.md5(page["text"].encode("utf-8")).hexdigest()
+            if digest in seen_hashes:
+                duplicates += 1
+                continue
+            seen_hashes[digest] = page["path"]
 
-        if page["extracted_from"].startswith("wrapped"):
-            from_wrapped += 1
+            if page["extracted_from"].startswith("wrapped"):
+                from_wrapped += 1
 
-        cell[1] += 1
-        cell[2] += page["text_chars"]
-        pages.append(page)
+            cell[1] += 1
+            cell[2] += page["text_chars"]
+            pages.append(page)
 
     # Разрешаем редиректы: заголовок термина уходит в aliases целевой страницы.
     # Так «Иерархия 2D-элементов» ищется по настоящей статье, а не по пустышке.
