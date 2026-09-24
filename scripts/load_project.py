@@ -75,6 +75,11 @@ def open_editor(path: Path) -> None:
 def main() -> int:
     log = start_log("load_project")
     from config import OUTPUT_DIR
+    from src.pm_macro import PROJECT_FILE
+
+    auto = "--auto" in sys.argv
+    if auto:
+        return load_from_macro(log)
 
     probe = OUTPUT_DIR / "PM_PROBE.mac"
 
@@ -123,6 +128,38 @@ def main() -> int:
     print("  /macro — макросы с настоящими именами")
     print("  /project — показать снимок и проверки")
     print("  /pm — попробовать живое подключение к PowerMill (шаг 2.1)")
+    return 0
+
+
+def load_from_macro(log) -> int:
+    """Путь без блокнота: файл написал макрос PM_AI_SNAPSHOT.mac в PowerMill."""
+    from src.pm_macro import PROJECT_FILE
+
+    if not PROJECT_FILE.exists():
+        print(f"(!) Нет файла снимка {PROJECT_FILE}")
+        print("    Запусти в PowerMill макрос PM_AI_SNAPSHOT.mac (пункт 28 меню).")
+        return 2
+
+    text = PROJECT_FILE.read_text(encoding="utf-8", errors="replace")
+    context = project_context.parse_dump(text)
+    if context.get("_total", 0) == 0:
+        print("(!) В файле снимка не нашлось объектов проекта.")
+        print("    Проверь, что макрос выполнился без ошибок (окно сообщений PowerMill).")
+        return 3
+
+    context["_source"] = "макрос PowerMill (PM_AI_SNAPSHOT.mac)"
+    saved = project_context.save(context)
+    print(project_context.summary(context))
+    checks = project_context.format_checks(context)
+    if checks:
+        print()
+        print(checks)
+    print()
+    print(f"💾 Сохранено: {saved}")
+    print()
+    print("Теперь ассистент знает твои имена: /project, /macro, /ask")
+    if "--verbose" in sys.argv:
+        print(f"Лог: {log}")
     return 0
 
 

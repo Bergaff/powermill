@@ -427,10 +427,21 @@ class PowerMillAI:
         return text
 
     def pm_status(self) -> str:
-        """Живое подключение к PowerMill (шаг 2.1)."""
-        from src import pm_live
+        """Живое подключение к PowerMill (шаг 2.1).
 
-        return pm_live.status_report(verbose=True)
+        Без моста — объясняем, что сделать (пункт 27). С мостом — сразу делаем
+        разведку API и сохраняем отчёт для отправки в чат.
+        """
+        from src import pm_live, pm_probe
+
+        if not any(pm_live.bridges().values()):
+            return (pm_live.status_report(verbose=False)
+                    + "\n\nЧто сделать: пункт 27 меню — поставить мост к PowerMill.\n"
+                      "После этого /pm покажет структуру API и подключится к проекту.")
+
+        pm_probe.run(verbose=True)
+        return (f"Отчёт разведки сохранён: {pm_probe.PROBE_FILE}\n"
+                f"Пришли его в чат — по нему будет точное подключение к проекту.")
 
     def ai_line(self) -> str:
         """Строка «какой ИИ используется» для статуса и отчётов."""

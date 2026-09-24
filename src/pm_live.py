@@ -67,6 +67,17 @@ def find_api_assembly(extra_dirs: list[str] | None = None) -> str | None:
     from src.power_mill_link import find_install_dirs
 
     folders = list(extra_dirs or []) + [str(p) for p in find_install_dirs()]
+    # Сначала папки, где сборки API точно есть (Project Server, сама установка),
+    # потом всё остальное: так поиск находит рабочий файл, а не первый попавшийся.
+    def rank(folder: str) -> tuple[int, str]:
+        low = folder.lower()
+        if "project server" in low:
+            return (0, low)
+        if "powermill 2026" in low or "powermill 2025" in low:
+            return (1, low)
+        return (2, low)
+
+    folders.sort(key=rank)
     for folder in folders:
         root = Path(folder)
         if not root.exists():
@@ -301,8 +312,8 @@ def status_report(verbose: bool = True) -> str:
     for title, ok in available.items():
         lines.append(f"  {'[есть]' if ok else '[НЕТ] '} {title}")
     if not any(available.values()):
-        lines.append("  Установка: pip install pywin32 pythonnet")
-        lines.append("  (или запусти пункт 23 меню — он подскажет)")
+        lines.append("  Как поставить: пункт 27 меню — «Поставить мост к PowerMill»")
+        lines.append("  (он же сразу проверит подключение и покажет разведку API)")
 
     assembly = find_api_assembly()
     lines.append(f"Сборка API: {assembly or 'не найдена'}")

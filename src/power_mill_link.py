@@ -278,7 +278,13 @@ def collect() -> dict:
 # Вывод: какой маршрут доступен
 # --------------------------------------------------------------------------
 def verdict(data: dict) -> list[dict]:
-    """Превращает результаты разведки в три заключения (маршруты A, B, C)."""
+    """Превращает результаты разведки в заключения по маршрутам.
+
+    Каждый маршрут: code, title, available, note и action (что сделать, если
+    маршрут пока не открыт). Маршрут B специально выделен: если сборки API и
+    COM-регистрация есть, а моста Python нет — это не «нельзя», а «осталось
+    поставить мост» (пункт 27 меню).
+    """
     routes: list[dict] = []
 
     # A. Макросы + файлы — работает, если PowerMill вообще установлен
@@ -290,6 +296,7 @@ def verdict(data: dict) -> list[dict]:
         "note": ("готово и работает уже сейчас: ассистент пишет макрос, "
                  "ты запускаешь его в PowerMill") if installed else
                 "PowerMill не найден — уточни папку установки",
+        "action": "" if installed else "пункт 10 меню — задать путь к справке",
     })
 
     # B. Внешняя программа к запущенному PowerMill
@@ -297,34 +304,53 @@ def verdict(data: dict) -> list[dict]:
     bridges = data.get("bridges") or {}
     progids = data.get("progids") or []
     api_found = bool(assemblies)
+    com_found = bool(progids)
     bridge_ready = any(bridges.values())
-    if api_found and bridge_ready:
-        note = ("API есть и мост Python готов — можно читать проект "
+
+    if (api_found or com_found) and bridge_ready:
+        note = ("API и COM есть, мост Python готов — можно читать проект "
                 "в реальном времени")
+        action = ""
+    elif api_found and com_found:
+        note = ("сборки API и COM-регистрация PowerMill найдены — "
+                "не хватает только моста Python")
+        action = "пункт 27 меню — поставить мост (pywin32 / pythonnet)"
     elif api_found:
-        note = ("сборки API найдены, но нужен мост Python: "
-                "pip install pywin32 (или pythonnet)")
-    elif progids:
-        note = f"сборок нет, но есть COM-регистрация: {', '.join(progids[:3])}"
+        note = "сборки API найдены, моста Python нет"
+        action = "пункт 27 меню — поставить мост (pywin32 / pythonnet)"
+    elif com_found:
+        note = f"есть COM-регистрация: {', '.join(progids[:3])}"
+        action = "пункт 27 меню — поставить pywin32 и попробовать подключение"
     else:
         note = ("не видно ни сборок API, ни COM-регистрации PowerMill — "
-                "маршрут закрыт или требует установки API из NuGet")
+                "маршрут требует установки API (NuGet) или другого выпуска")
+        action = "остаёмся на маршруте A (пункты 23–24)"
+
     routes.append({
         "code": "B",
         "title": "Внешняя программа к запущенному PowerMill (API/COM)",
-        "available": bool((api_found or progids) and bridge_ready),
+        "available": bool((api_found or com_found) and bridge_ready),
         "note": note,
+        "action": action,
     })
 
     # C. Плагин с окном внутри PowerMill
+    plugin_installers = [
+        path for path in data.get("install_dirs", [])
+        if any(word in str(path).lower()
+               for word in ("robot", "additive", "project server", "vimill",
+                            "ncsimul", "simulation analysis"))
+    ]
     wpf = any("WPFControls" in name for name in assemblies)
     routes.append({
         "code": "C",
         "title": "Плагин-окно внутри PowerMill (.NET/WPF)",
-        "available": False,          # пока всегда «нет»: нужна разработка
-        "note": ("нужны Visual Studio, .NET и регистрация плагина; "
-                 + ("сборки WPF найдены — основа есть" if wpf
+        "available": False,          # всегда «позже»: нужна своя сборка
+        "note": ("нужна своя сборка .NET и регистрация через regasm.exe; "
+                 + ("установленные плагины Autodesk найдены — "
+                    "есть на что опереться" if plugin_installers
                     else "сборок WPF не видно, потребуется SDK")),
+        "action": "пункт 25 меню — найти каркас и примеры плагинов",
     })
     return routes
 
@@ -380,6 +406,8 @@ def format_report(data: dict) -> str:
             mark = "[НЕЛЬЗЯ] "
         lines.append(f"  {mark}{route['code']}. {route['title']}")
         lines.append(f"            {route['note']}")
+        if route.get("action"):
+            lines.append(f"            → {route['action']}")
     lines.append("")
     return "\n".join(lines)
 
@@ -400,6 +428,11 @@ def main() -> int:
     print(format_report(data))
 
     path = write_probe_macro(OUTPUT_DIR)
+    if any(data.get("bridges", {}).values()):
+        print("Мост Python стоит — разведка API: пункт 27 меню (или /pm в чате).")
+    else:
+        print("Дальше: пункт 27 меню — поставить мост к PowerMill (живое чтение проекта).")
+    print()
     print("Макрос-разведчик записан:")
     print(f"  {path}")
     print()

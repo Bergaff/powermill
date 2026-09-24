@@ -38,7 +38,33 @@ def test_route_b_requires_api_assemblies_and_python_bridge():
     }
     route = {r["code"]: r for r in link.verdict(data)}["B"]
     assert route["available"] is False
-    assert "pywin32" in route["note"]        # подсказка, что доустановить
+    assert "моста Python" in route["note"]   # объясняем, чего не хватает
+    assert "пункт 27" in route["action"]     # и что для этого сделать
+
+
+def test_route_b_with_com_registration_points_to_bridge_install():
+    """Реальный случай пользователя: COM есть, сборки API есть, моста нет."""
+    data = {
+        "install_dirs": [Path("E:/powermill 2026/PowerMill 2026")],
+        "assemblies": {"Delcam.ProductInterface.PowerMILL.dll":
+                       ["C:/Program Files/Autodesk/PowerMill Project Server 2026/x.dll"]},
+        "progids": ["PowerMill.Application", "PowerMILL.Application"],
+        "bridges": {"pywin32 (COM)": False, "pythonnet (.NET)": False},
+    }
+    route = {r["code"]: r for r in link.verdict(data)}["B"]
+    assert route["available"] is False
+    assert "COM-регистрация" in route["note"]
+    assert "пункт 27" in route["action"]
+
+
+def test_route_c_mentions_installed_plugins():
+    data = {"install_dirs": [Path("E:/pm"),
+                             Path("C:/Program Files/Autodesk/Autodesk PowerMill Robot Plugin 2026")],
+            "assemblies": {}}
+    route = {r["code"]: r for r in link.verdict(data)}["C"]
+    assert route["available"] is False
+    assert "опереться" in route["note"]
+    assert "пункт 25" in route["action"]
 
 
 def test_route_b_available_when_everything_present():
