@@ -13,8 +13,8 @@ echo =========================================================
 echo.
 
 set "PY=python"
+if exist ".venv\Scripts\python.exe" set "PY=.venv\Scripts\python.exe"
 if exist "venv\Scripts\python.exe" set "PY=venv\Scripts\python.exe"
-if exist "venv\Scripts\python.exe" goto venv_ok
 echo [!] Виртуального окружения нет - работаю системным Python.
 echo     Если чего-то не хватает: setup_light.bat - 1 минута
 echo.

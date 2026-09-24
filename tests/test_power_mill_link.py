@@ -128,7 +128,38 @@ def test_write_probe_macro(tmp_path):
     path = link.write_probe_macro(tmp_path)
     assert path.name == "PM_PROBE.mac"
     assert path.exists()
-    assert "PROBE END" in path.read_text(encoding="utf-8")
+    text = path.read_text(encoding="utf-8")
+    assert "PROBE END" in text
+    # путь к снимку берётся из переданной папки, а не из константы
+    assert "pm_project.txt" in text
+    assert str(tmp_path) in text
+
+
+def test_probe_macro_writes_file_not_only_console():
+    """Макрос сам пишет файл — иначе кажется, что он «ничего не делает»."""
+    text = link.probe_macro("E:/powermill-ai/output/pm_project.txt")
+    assert "FILE OPEN $outfile FOR WRITE AS out" in text
+    assert "FILE WRITE" in text
+    assert "FILE CLOSE out" in text
+    assert "MESSAGE INFO" in text                  # видимое окно в конце
+    assert 'FILE WRITE "MODELS:" TO out' in text
+    assert "STOCK MODELS:" in text and "PATTERNS:" in text
+    assert "E:\\powermill-ai\\output\\pm_project.txt" in text
+
+
+def test_probe_macro_passes_our_pml_vocab():
+    from src import pml_vocab
+
+    vocab = {"entities": ["model", "boundary", "tool", "toolpath", "workplane",
+                          "ncprogram", "stockmodel", "pattern"], "parameters": []}
+    report = pml_vocab.validate(link.probe_macro("output/pm_project.txt"), vocab)
+    assert report["ok"], pml_vocab.format_check(report)
+
+
+def test_probe_macro_sections_cover_project():
+    for header, folder in link.PROBE_SECTIONS:
+        assert header and folder
+        assert f'FOLDER("{folder}")' in link.probe_macro("x/pm_project.txt")
 
 
 # --------------------------------------------------------------------------

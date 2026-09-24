@@ -136,6 +136,22 @@ def test_diagnostic_bats_point_to_reports():
         assert "29" in text, f"{name} должен подсказывать пункт 29 (отчёты)"
 
 
+def test_every_bat_checks_both_venv_names():
+    """Все батники ищут и `venv`, и `.venv`.
+
+    Регресс: в load_project.bat проверялся только `.venv`, поэтому пункт 24
+    запускался системным Python — без pywin32, и «живое чтение» сообщало
+    «pywin32 не установлен», хотя мост стоял в venv (пункт 27).
+    """
+    for path in BATS:
+        text = path.read_text(encoding="utf-8")
+        if 'set "PY=python"' not in text:
+            continue
+        assert "venv\Scripts\python.exe" in text.replace(
+            ".venv\Scripts\python.exe", ""), \
+            f"{path.name}: не проверяется папка venv"
+
+
 def test_gitattributes_forces_crlf():
     attrs = (ROOT / ".gitattributes").read_text(encoding="utf-8")
     assert "*.bat" in attrs and "eol=crlf" in attrs, \

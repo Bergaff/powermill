@@ -85,8 +85,11 @@ def attach(progids: tuple[str, ...] = PROGIDS):
     запускать его сами не будем, это решение технолога.
     """
     if _win32com is None:
-        return None, ("pywin32 не установлен. Поставить: пункт 27 меню "
-                      "(или pip install pywin32)")
+        import sys
+
+        return None, (f"pywin32 не установлен в этом Python: {sys.executable}\n"
+                      "   Поставить: пункт 27 меню (он ставит пакеты в тот же "
+                      "интерпретатор).")
 
     # GetActiveObject присоединяется ТОЛЬКО к уже запущенной программе: если
     # PowerMill закрыт, он не откроется (в отличие от Dispatch). Поэтому

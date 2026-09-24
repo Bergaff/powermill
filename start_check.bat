@@ -18,6 +18,8 @@ goto step2
 echo [1/6] venv НЕ найден - работаю системным Python.
 echo       Если что-то не установлено, запусти setup.bat
 set "PY=python"
+if exist ".venv\Scripts\python.exe" set "PY=.venv\Scripts\python.exe"
+if exist "venv\Scripts\python.exe" set "PY=venv\Scripts\python.exe"
 goto step2
 
 :step2

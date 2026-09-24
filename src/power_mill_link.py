@@ -63,48 +63,76 @@ KNOWN_PROGIDS = (
 # Макрос-разведчик: печатает в окно сообщений PowerMill сведения о проекте и
 # версии. Пользователь запускает его руками — это проверяет, что макросы
 # вообще исполняются, и показывает, что именно видит PML.
-PROBE_MACRO = """// ============================================================
-//  РАЗВЕДКА PowerMill AI
-//  Запуск: PowerMill -> вкладка "Макрос" -> Выполнить -> этот файл
-//  Если PowerMill напишет об ошибке — пришли и её, это тоже полезно.
-// ============================================================
+# Разделы, которые печатает макрос разведки: (заголовок, папка PowerMill)
+PROBE_SECTIONS: tuple[tuple[str, str], ...] = (
+    ("MODELS:", "Model"),
+    ("BOUNDARIES:", "Boundary"),
+    ("TOOLS:", "Tool"),
+    ("TOOLPATHS:", "Toolpath"),
+    ("WORKPLANES:", "Workplane"),
+    ("NC PROGRAMS:", "NCProgram"),
+    ("STOCK MODELS:", "StockModel"),
+    ("PATTERNS:", "Pattern"),
+)
 
-PRINT "--- POWERMILL AI PROBE START ---"
 
-PRINT "MODELS:"
-FOREACH $m IN FOLDER("Model") {
-    PRINT $m.name
-}
+def _pml_text(path: Path) -> str:
+    """Путь для PML-строки: windows-разделители, обратные слэши не удваиваем."""
+    text = str(path)
+    if len(text) > 1 and text[1] == ":":
+        return text.replace("/", "\\")
+    return text
 
-PRINT "BOUNDARIES:"
-FOREACH $b IN FOLDER("Boundary") {
-    PRINT $b.name
-}
 
-PRINT "TOOLS:"
-FOREACH $t IN FOLDER("Tool") {
-    PRINT $t.name
-}
+def probe_macro(output_file: Path | str | None = None) -> str:
+    """Текст макроса разведки.
 
-PRINT "TOOLPATHS:"
-FOREACH $tp IN FOLDER("Toolpath") {
-    PRINT $tp.name
-}
+    Важное отличие от первых версий: макрос **пишет файл**, а не только печатает
+    в окно сообщений PowerMill (оно может быть скрыто — тогда выглядит так, будто
+    макрос «ничего не делает»). В конце показывается окно с результатом.
+    """
+    target = Path(output_file) if output_file else Path("output") / "pm_project.txt"
+    out = _pml_text(target)
 
-PRINT "WORKPLANES:"
-FOREACH $w IN FOLDER("Workplane") {
-    PRINT $w.name
-}
+    body: list[str] = [
+        "// ============================================================",
+        "//  РАЗВЕДКА PowerMill AI",
+        "//  Запуск: PowerMill -> вкладка «Макрос» -> Выполнить -> этот файл",
+        "//  Макрос ничего не меняет: только читает списки объектов.",
+        "// ============================================================",
+        "",
+        f"STRING $outfile = '{out}'",
+        "FILE OPEN $outfile FOR WRITE AS out",
+        'FILE WRITE "--- POWERMILL AI PROBE START ---" TO out',
+        "",
+        'PRINT "--- POWERMILL AI PROBE START ---"',
+    ]
+    for header, folder in PROBE_SECTIONS:
+        body.append("")
+        body.append(f'PRINT "{header}"')
+        body.append(f'FILE WRITE "{header}" TO out')
+        body.append(f'FOREACH $item IN FOLDER("{folder}") {{')
+        body.append("    PRINT $item.name")
+        body.append("    FILE WRITE $item.name TO out")
+        body.append("}")
 
-PRINT "NC PROGRAMS:"
-FOREACH $n IN FOLDER("NCProgram") {
-    PRINT $n.name
-}
+    body += [
+        "",
+        'PRINT "--- POWERMILL AI PROBE END ---"',
+        'FILE WRITE "--- POWERMILL AI PROBE END ---" TO out',
+        "FILE CLOSE out",
+        "",
+        'PRINT "Готово. Снимок записан: " + $outfile',
+        'MESSAGE INFO "Разведка PowerMill AI закончена." + crlf + crlf + '
+        '"Снимок проекта записан в файл:" + crlf + $outfile + crlf + crlf + '
+        '"Что дальше: запусти пункт 24 меню — ассистент разберёт этот файл."',
+        "",
+    ]
+    return "\n".join(body)
 
-PRINT "--- POWERMILL AI PROBE END ---"
-// Скопируй всё от START до END (и текст ошибки, если была) и вставь
-// ассистенту. По этому списку он будет знать настоящие имена твоего проекта.
-"""
+
+# Совместимость: текст макроса с путём по умолчанию
+PROBE_MACRO = probe_macro()
 
 
 # --------------------------------------------------------------------------
@@ -413,11 +441,12 @@ def format_report(data: dict) -> str:
 
 
 def write_probe_macro(folder: Path) -> Path:
-    """Кладёт макрос-разведчик, который технолог запускает в PowerMill."""
+    """Пишет макрос разведки в папку output (путь к файлу — внутри макроса)."""
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / "PM_PROBE.mac"
-    path.write_text(PROBE_MACRO, encoding="utf-8")
+    target = folder / "pm_project.txt"
+    path.write_text(probe_macro(target), encoding="utf-8")
     return path
 
 

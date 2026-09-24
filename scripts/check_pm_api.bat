@@ -4,6 +4,7 @@ title PowerMill AI - проверка связи с PowerMill
 cd /d "%~dp0.."
 set "PY=python"
 if exist ".venv\Scripts\python.exe" set "PY=.venv\Scripts\python.exe"
+if exist "venv\Scripts\python.exe" set "PY=venv\Scripts\python.exe"
 echo.
 "%PY%" -m scripts.check_pm_api
 set "RC=%ERRORLEVEL%"
