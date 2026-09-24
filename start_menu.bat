@@ -51,13 +51,14 @@ echo    ЗАПИСЬ В ПРОЕКТ (Уровень 3, по шагам)
 echo     30  -  Записать режимы резания в проект PowerMill (шаг 3.1)
 echo.
 echo     31  -  Собрать черновую операцию (инструмент+заготовка+траектория)
+echo     32  -  Интерфейс в браузере: чат, прогресс, отчёты (пункт 32)
 echo.
 echo      0  -  Выход
 echo.
 echo   Внутри любых экранов слово  «назад»  или  «меню»
 echo   возвращает к этому списку.
 echo.
-set /p choice="   Выбор (0-31): "
+set /p choice="   Выбор (0-32): "
 
 if "%choice%"=="1"  goto chat
 if "%choice%"=="2"  goto search
@@ -90,6 +91,7 @@ if "%choice%"=="28" goto pmmacros
 if "%choice%"=="29" goto reports
 if "%choice%"=="30" goto apply
 if "%choice%"=="31" goto operation
+if "%choice%"=="32" goto webui
 if "%choice%"=="0"  exit /b 0
 if /i "%choice%"=="назад" exit /b 0
 if /i "%choice%"=="меню" goto menu
@@ -181,6 +183,10 @@ goto menu
 
 :operation
 call "%~dp0scripts\make_operation.bat"
+goto menu
+
+:webui
+call "%~dp0scripts\chat_ui.bat"
 goto menu
 
 :pmmacros

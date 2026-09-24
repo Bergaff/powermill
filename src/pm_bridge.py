@@ -97,26 +97,44 @@ def clean_for_power_mill(text: str, limit: int = 4000) -> str:
     return cleaned
 
 
-def answer_request(query: str, mode: str, ai=None) -> str:
+def answer_request(query: str, mode: str, ai=None, progress=None) -> str:
     """Считает ответ тем же движком, что и чат.
 
     Режимы резания считаются формулами — им не нужны ни ИИ, ни векторная база,
     поэтому они обрабатываются раньше и работают всегда.
+
+    `progress` — необязательная функция для интерфейса (пункт 32): через неё
+    уходят понятные шаги, чтобы технолог видел, что происходит, а не пустой экран.
     """
+    report = progress or (lambda _text: None)
+
+    def note(text: str) -> None:
+        try:
+            report(text)
+        except Exception:                                  # noqa: BLE001
+            pass
+
     if mode == "cutting":
+        note("Считаю режимы резания по формулам (без ИИ и без базы)…")
         from src import cutting
 
-        return cutting.answer(query)[0]
+        answer = cutting.answer(query)[0]
+        note("Расчёт готов")
+        return answer
 
+    note("Поднимаю ассистента: справка + словарь PML + векторная база…")
     from src.rag import PowerMillAI
 
     if ai is None:
-        ai = PowerMillAI(verbose=False)
+        ai = PowerMillAI(verbose=bool(progress))
 
     if mode == "macro":
+        note("Собираю словарь настоящего PML и пишу макрос…")
         return ai.macro(query, save=True)
     if mode == "error":
+        note("Ищу похожие ошибки в справке…")
         return ai.error(query)
+    note("Ищу в справке и формулирую ответ…")
     return ai.ask(query)
 
 
