@@ -107,11 +107,16 @@ IF $question == '' {{
 }}
 
 // 3. Пишем запрос в файл (его прочитает ассистент)
+//    ВАЖНО: в FILE WRITE уходит ГОТОВАЯ переменная, а не выражение со склейкой.
+//    На живом PowerMill 2026 строка `FILE WRITE "MODE=" + STRING($mode) TO req`
+//    останавливала макрос ровно на этом месте (видно в логе консоли 24.09),
+//    поэтому текст собираем отдельной командой.
 STRING $reqfile = '{request}'
-FILE OPEN $reqfile FOR WRITE AS req
-FILE WRITE "MODE=" + STRING($mode) TO req
-FILE WRITE $question TO req
-FILE CLOSE req
+STRING $mode_line = "MODE=" + STRING($mode)
+FILE OPEN $reqfile FOR WRITE AS askq
+FILE WRITE $mode_line TO askq
+FILE WRITE $question TO askq
+FILE CLOSE askq
 
 // 4. Запускаем ассистента (он посчитает ответ и запишет файл)
 OLE FILEACTION 'OPEN' '{launcher}'
@@ -122,9 +127,9 @@ MACRO PAUSE "Ассистент готовит ответ. Когда в окн�
 // 6. Показываем ответ прямо в PowerMill
 STRING $ansfile = '{answer}'
 STRING LIST $lines = {{}}
-FILE OPEN $ansfile FOR READ AS ans
-FILE READ $lines FROM ans
-FILE CLOSE ans
+FILE OPEN $ansfile FOR READ AS aska
+FILE READ $lines FROM aska
+FILE CLOSE aska
 STRING $text = ""
 FOREACH $l IN $lines {{
     $text = $text + $l + crlf
@@ -215,66 +220,120 @@ OLE FILEACTION 'OPEN' '{launcher}'
 """
 
 
+def trace_files() -> list[Path]:
+    """Файлы-отметки шагов самопроверки: pm_trace_1.txt … pm_trace_5.txt.
+
+    Зачем отдельный файл на каждый шаг: если макрос остановится на середине,
+    по последнему появившемуся файлу сразу видно, ГДЕ это случилось. Проверить
+    «есть ли файл» внутри PML нельзя (такой функции нет), а вот записать свой
+    файл перед следующим шагом — можно.
+    """
+    return [OUTPUT_DIR / f"pm_trace_{index}.txt" for index in range(1, 6)]
+
+
 def test_macro() -> str:
-    """Самопроверка моста: файлы + запуск программы + пауза.
+    """Самопроверка моста: файлы + запуск программы + пауза — по шагам.
 
     Как проверяется запуск программы без догадок: макрос сам пишет файл с
     текстом-ожиданием, внешний .bat перезаписывает его своим подтверждением, а
     макрос читает файл и сравнивает. Если текст не изменился — программа не
     запустилась. Никаких проверок существования файла, которых нет в PML.
+
+    Вторая задача макроса — диагностика. 24.09 на живом PowerMill макрос
+    останавливался в районе записи файла, и по логу консоли было непонятно, на
+    каком именно шаге. Поэтому теперь каждый шаг оставляет свой файл
+    (pm_trace_1.txt … pm_trace_5.txt) и печатает короткую строку «powermill ai:
+    шаг N ок». Последняя отметка = последний работающий шаг, а следующая строка
+    макроса — та самая проблемная команда.
+
+    Дескрипторы файлов у каждого шага свои (tf1, tf2, tk1…tk5): если прошлый
+    запуск оборвался и оставил файл открытым, новый запуск всё равно пройдёт.
     """
     test_file = pml_path(TEST_FILE)
     launcher = _win_path(OUTPUT_DIR / "pm_test.bat")
+    traces = [pml_path(path) for path in trace_files()]
 
     return f"""// ============================================================
 //  PowerMill AI — самопроверка моста (запусти этот макрос первым)
 //  Проверяет: запись файла, чтение файла, запуск программы, пауза.
+//
+//  Каждый шаг отмечается своим файлом pm_trace_1.txt … pm_trace_5.txt.
+//  Если макрос остановится — по номеру последнего файла видно, где именно:
+//  следующая строка макроса после последней отметки и есть проблемная команда.
+//  Открыть отметки: пункт 29 меню («Показать отчёты»).
 // ============================================================
 
 RESET LOCALVARS
 
-// --- 1. Пишем файл из PowerMill ---
+// --- Шаг 1. Пишем файл из PowerMill ---
 STRING $f = '{test_file}'
-FILE OPEN $f FOR WRITE AS out
-FILE WRITE "WAIT" TO out
-FILE CLOSE out
-STRING $m1 = "[1/4] Файл записан из PowerMill: " + $f
+FILE OPEN $f FOR WRITE AS tf1
+FILE WRITE "WAIT" TO tf1
+FILE CLOSE tf1
+
+STRING $t1 = '{traces[0]}'
+FILE OPEN $t1 FOR WRITE AS tk1
+FILE WRITE "шаг 1: файл записан из PowerMill" TO tk1
+FILE CLOSE tk1
+STRING $m1 = "powermill ai: шаг 1 ок (запись файла)"
 PRINT $m1
 
-// --- 2. Читаем его обратно ---
+// --- Шаг 2. Читаем его обратно ---
 STRING LIST $lines = {{}}
-FILE OPEN $f FOR READ AS inp
-FILE READ $lines FROM inp
-FILE CLOSE inp
+FILE OPEN $f FOR READ AS tf2
+FILE READ $lines FROM tf2
+FILE CLOSE tf2
 STRING $text = ""
 FOREACH $l IN $lines {{
     $text = $text + $l
 }}
-STRING $m2 = "[2/4] Файл прочитан обратно, содержимое: " + $text
+
+STRING $t2 = '{traces[1]}'
+FILE OPEN $t2 FOR WRITE AS tk2
+FILE WRITE $text TO tk2
+FILE CLOSE tk2
+STRING $m2 = "powermill ai: шаг 2 ок (чтение файла)"
 PRINT $m2
 
-// --- 3. Запускаем внешнюю программу (наш .bat) ---
+// --- Шаг 3. Запускаем внешнюю программу (наш .bat) ---
 STRING $launcher = '{launcher}'
 OLE FILEACTION 'OPEN' $launcher
 
-// --- 4. Пауза: технолог видит тестовое окно и нажимает RESUME ---
+STRING $t3 = '{traces[2]}'
+FILE OPEN $t3 FOR WRITE AS tk3
+FILE WRITE "шаг 3: команда запуска внешней программы отправлена" TO tk3
+FILE CLOSE tk3
+PRINT "powermill ai: шаг 3 ок (запуск отправлен)"
+
+// --- Шаг 4. Пауза: технолог видит тестовое окно и нажимает RESUME ---
 MACRO PAUSE "Открылось окно 'ТЕСТ МОСТА'? Нажми RESUME."
 
-// --- 5. Читаем файл ещё раз: программа должна была его перезаписать ---
+STRING $t4 = '{traces[3]}'
+FILE OPEN $t4 FOR WRITE AS tk4
+FILE WRITE "шаг 4: пауза пройдена (RESUME нажат)" TO tk4
+FILE CLOSE tk4
+PRINT "powermill ai: шаг 4 ок (пауза пройдена)"
+
+// --- Шаг 5. Читаем файл ещё раз: программа должна была его перезаписать ---
 STRING LIST $after = {{}}
-FILE OPEN $f FOR READ AS inp2
-FILE READ $after FROM inp2
-FILE CLOSE inp2
+FILE OPEN $f FOR READ AS tf5
+FILE READ $after FROM tf5
+FILE CLOSE tf5
 STRING $after_text = ""
 FOREACH $l IN $after {{
     $after_text = $after_text + $l
 }}
 
-STRING $m3 = "[3/4] Содержимое после запуска программы: " + $after_text
+STRING $t5 = '{traces[4]}'
+FILE OPEN $t5 FOR WRITE AS tk5
+FILE WRITE $after_text TO tk5
+FILE CLOSE tk5
+
+STRING $m3 = "powermill ai: шаг 5, содержимое после программы: " + $after_text
 PRINT $m3
 
 IF $after_text == $text {{
-    MESSAGE WARN "МОСТ РАБОТАЕТ ЧАСТИЧНО: PowerMill пишет и читает файлы, но внешняя программа не запустилась или не перезаписала файл. Проверь, что pm_test.bat открывается двойным кликом."
+    MESSAGE WARN "МОСТ РАБОТАЕТ ЧАСТИЧНО: PowerMill пишет и читает файлы, но внешняя программа не запустилась или не перезаписала файл. Проверь, что pm_test.bat открывается двойным кликом, и посмотри pm_trace_3.txt (пункт 29 меню)."
     PRINT "[4/4] Запуск внешней программы: НЕ РАБОТАЕТ"
     STRING $m5 = "Файл-запускатель: " + $launcher
     PRINT $m5

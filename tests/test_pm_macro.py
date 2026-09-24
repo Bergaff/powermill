@@ -84,10 +84,37 @@ def test_macros_have_no_unproven_commands():
 def test_test_macro_checks_launch_by_comparing_content():
     """Запуск программы проверяется сравнением содержимого файла, а не EXISTS()."""
     code = pm_macro.test_macro()
-    assert "FILE WRITE \"WAIT\" TO out" in code
+    assert "FILE WRITE \"WAIT\" TO tf1" in code
     assert "IF $after_text == $text" in code
     assert "EXISTS(FILEOPEN" not in code          # такой функции в PML нет
     assert "OLE FILEACTION 'OPEN' $launcher" in code
+
+
+def test_test_macro_marks_every_step_with_its_own_file():
+    """Каждый шаг оставляет свой файл: по последнему видно, где макрос встал.
+
+    24.09 на живом PowerMill макрос остановился в районе записи файла, и по
+    логу консоли нельзя было понять, на каком именно шаге. Теперь шаг 1..5
+    отмечается файлами pm_trace_1.txt … pm_trace_5.txt (открыть — пункт 29).
+    """
+    code = pm_macro.test_macro()
+    for path in pm_macro.trace_files():
+        assert pm_macro.pml_path(path) in code, path
+    for index in range(1, 6):
+        assert f"FILE OPEN $t{index} FOR WRITE AS tk{index}" in code
+        assert f"FILE CLOSE tk{index}" in code
+        assert f"powermill ai: шаг {index}" in code.lower().replace(
+            "шаг 1 ок", "шаг 1").replace("шаг 2 ок", "шаг 2")
+
+
+def test_test_macro_uses_fresh_file_handles():
+    """Дескрипторы файлов не повторяются: незакрытый файл прошлого запуска
+    не должен мешать новому запуску."""
+    code = pm_macro.test_macro()
+    handles = [line.split()[-1] for line in code.splitlines()
+               if line.startswith("FILE OPEN")]
+    assert len(handles) == len(set(handles)), handles
+    assert "tf1" in handles and "tk5" in handles
 
 
 def test_test_macro_passes_own_validator():
@@ -144,23 +171,46 @@ def test_macros_reset_localvars_first():
         assert "RESET LOCALVARS" in head, code.splitlines()[:3]
 
 
-def test_print_and_message_get_one_value():
-    """В PRINT/MESSAGE передаём одно значение: склейка — только в $переменных.
+def test_print_message_and_file_write_get_one_value():
+    """В PRINT/MESSAGE/FILE WRITE передаём одно значение: склейка — в $переменных.
 
     Так пишут в рабочих макросах с форума Autodesk: сначала
     `$Ligne = $tp.name + ";" + $tp.Number`, потом `FILE WRITE $Ligne TO out`.
-    Что команда принимает выражение с `+`, мы на живом PowerMill не проверяли —
-    поэтому не рискуем: собираем текст в переменную и печатаем её.
+
+    Проверено на живом PowerMill 2026 (лог консоли 24.09): строка
+    `FILE WRITE "MODE=" + STRING($mode) TO req` останавливала макрос ровно на
+    этом месте. Поэтому выражение живёт только в присваивании, а в FILE WRITE,
+    PRINT и MESSAGE уходит готовая переменная.
     """
-    from src import power_mill_link
+    from src import pm_edit, pm_operation, power_mill_link
 
     texts = (pm_macro.ask_macro(), pm_macro.snapshot_macro(), pm_macro.test_macro(),
-             power_mill_link.probe_macro("E:/powermill-ai/output/pm_project.txt"))
+             power_mill_link.probe_macro("E:/powermill-ai/output/pm_project.txt"),
+             pm_operation.build_macro(pm_operation.OperationPlan(
+                 toolpath_name="Черновая", tool_name="D16", tool_diameter=16)),
+             pm_edit.edit_macro([pm_edit.SpeedFeed(toolpath="Черновая", spindle=4500,
+                                                   feed=1200, plunge=400)]))
+    checked = 0
     for code in texts:
         for line in code.splitlines():
             stripped = line.strip()
-            if stripped.startswith(("PRINT", "MESSAGE")):
+            if stripped.startswith(("//", ";")):
+                continue
+            if stripped.startswith(("PRINT", "MESSAGE", "FILE WRITE")):
                 assert " + " not in stripped, stripped
+                checked += 1
+    assert checked > 30, f"подозрительно мало проверенных строк: {checked}"
+
+
+def test_ask_macro_writes_mode_line_from_a_variable():
+    """Номер режима склеивается со строкой в присваивании, а не в FILE WRITE."""
+    code = pm_macro.ask_macro()
+    assert 'STRING $mode_line = "MODE=" + STRING($mode)' in code
+    assert "FILE WRITE $mode_line TO askq" in code
+    # именно в команде FILE WRITE склейки быть не должно (в комментарии можно)
+    for line in code.splitlines():
+        if line.strip().startswith("FILE WRITE"):
+            assert " + " not in line, line
 
 
 def test_snapshot_macro_checks_written_file():
