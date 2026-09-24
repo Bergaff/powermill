@@ -30,6 +30,7 @@ KNOWN_REPORTS = (
     ("pm_operation_report.txt", "Черновая операция: что собралось (пункт 31)"),
     ("pm_operation_result.txt", "Отчёт макроса операции по шагам (STEP)"),
     ("pm_tool_report.txt", "Фреза в проекте: команды и ответы PowerMill (пункт 33)"),
+    ("pm_ribbon_report.txt", "Панель «PowerMill AI» на ленте (пункт 34)"),
     ("pm_tool_word.txt", "Слово создания фрезы, которое сработало"),
     ("pm_project.txt", "Снимок проекта от макроса PowerMill (пункт 24)"),
     ("pm_trace_5.txt", "Самопроверка моста: шаг 5 — что ответила внешняя программа"),

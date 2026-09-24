@@ -58,6 +58,7 @@ REPORT_TITLES = {
     "pm_operation_report.txt": "Черновая операция (пункт 31)",
     "pm_operation_result.txt": "Операция: отчёт макроса по шагам",
     "pm_tool_report.txt": "Фреза в проекте: команды (пункт 33)",
+    "pm_ribbon_report.txt": "Панель на ленте PowerMill (пункт 34)",
     "pm_tool_word.txt": "Слово создания фрезы",
     "pm_project.txt": "Снимок проекта от макроса",
     "pm_trace_1.txt": "Самопроверка моста: шаг 1 — файл записан",
