@@ -12,15 +12,52 @@
 import os
 from pathlib import Path
 
+# === Какая версия Python подходит ===
+# Ниже 3.10 не работает то, что мы используем; выше 3.13 библиотеки ставятся
+# дольше (часть ещё не собрана под новые версии), поэтому это предупреждение,
+# а не запрет.
+PYTHON_MIN = (3, 10)
+PYTHON_MAX = (3, 14)
+
 # === Режим работы: eco (днём, за компом) / turbo (ночью, в полную силу) ===
 CURRENT_MODE = os.getenv("APP_MODE", "eco")
 
 # === Где лежит код репозитория ===
 CODE_DIR = Path(__file__).resolve().parent
 
-# === Корень тяжёлых данных: ТОЛЬКО диск E ===
-# Переопределить можно переменной окружения POWERMILL_DATA_ROOT.
-DATA_ROOT = Path(os.getenv("POWERMILL_DATA_ROOT", "E:/powermill-ai"))
+# === Корень тяжёлых данных ===
+# Порядок такой (первое, что задано, побеждает):
+#   1) переменная окружения POWERMILL_DATA_ROOT — так было раньше;
+#   2) файл `install.json` рядом с кодом — его пишет install.bat при установке
+#      (нужен, чтобы у другого человека всё работало без переменных окружения);
+#   3) значение по умолчанию — как в этом проекте, диск E:.
+def _settings_file_value(key: str) -> str | None:
+    """Читает значение из install.json (пишет установщик). Ничего не ломает."""
+    import json
+
+    candidates = []
+    custom = os.getenv("POWERMILL_AI_SETTINGS")
+    if custom:
+        candidates.append(Path(custom))
+    candidates.append(CODE_DIR / "install.json")
+    for path in candidates:
+        try:
+            if not path.exists():
+                continue
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+DATA_ROOT = Path(
+    os.getenv("POWERMILL_DATA_ROOT")
+    or _settings_file_value("data_root")
+    or "E:/powermill-ai"
+)
 
 DATA_DIR = DATA_ROOT / "data"
 PDF_DIR = DATA_DIR / "pdf"

@@ -26,9 +26,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 # Имена макросов-запускателей (их пишет пункт 34 в папку макросов PowerMill)
 MACRO_DIR_HINT = "output"
+
+# Где искать наши макросы: сначала та папка, куда их пишут пункты 23/28/34,
+# потом запасные варианты (на случай другой раскладки).
+MACRO_FOLDERS: tuple[str, ...] = ("output/pm_macros", "output", "output/macros")
 
 GROUP_MACROS = "Внутри PowerMill (макросы)"
 GROUP_SCENARIOS = "Сценарии ассистента (отдельное окно)"
@@ -55,6 +60,11 @@ class Action:
     @property
     def is_macro(self) -> bool:
         return self.kind == "macro"
+
+    @property
+    def target_path(self) -> Path:
+        """Цель как путь (в списке пути записаны по-виндовому, с `\\`)."""
+        return Path(self.target.replace("\\", "/"))
 
     @property
     def ribbon_target(self) -> str:

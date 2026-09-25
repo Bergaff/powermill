@@ -63,12 +63,15 @@ echo     37  -  СДЕЛАЙ: план -> выполнение -> проверк
 echo.
 echo     38  -  Плагин-панель «PowerMill AI» внутри PowerMill  (шаг 2.3б)
 echo.
+echo     39  -  Окно приложения PowerMill AI (и ярлык)
+echo     40  -  Проверить компьютер: готов ли он к работе
+echo.
 echo      0  -  Выход
 echo.
 echo   Внутри любых экранов слово  «назад»  или  «меню»
 echo   возвращает к этому списку.
 echo.
-set /p choice="   Выбор (0-38): "
+set /p choice="   Выбор (0-40): "
 
 if "%choice%"=="1"  goto chat
 if "%choice%"=="2"  goto search
@@ -108,6 +111,8 @@ if "%choice%"=="35" goto checks
 if "%choice%"=="36" goto nc
 if "%choice%"=="37" goto flow
 if "%choice%"=="38" goto plugin2
+if "%choice%"=="39" goto app
+if "%choice%"=="40" goto doctor
 if "%choice%"=="0"  exit /b 0
 if /i "%choice%"=="назад" exit /b 0
 if /i "%choice%"=="меню" goto menu
@@ -227,6 +232,14 @@ goto menu
 
 :plugin2
 call "%~dp0scripts\build_plugin.bat"
+goto menu
+
+:app
+call "%~dp0start_app.bat"
+goto menu
+
+:doctor
+call "%~dp0scripts\doctor.bat"
 goto menu
 
 :pmmacros

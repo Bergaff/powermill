@@ -86,8 +86,8 @@ EXTRA_DLL_NAMES = (
 DEFAULT_PM_VERSION = "2026.0"
 REPORT_FILE = OUTPUT_DIR / "pm_plugin_build_report.txt"
 
-# Где искать наши макросы (PM_AI_ASK.mac и другие) — на случай другой раскладки
-MACRO_FOLDERS = ("output", "output/pm_macros", "macros")
+# Где искать наши макросы (PM_AI_ASK.mac и другие) — из общего списка действий.
+MACRO_FOLDERS = pm_buttons.MACRO_FOLDERS
 
 
 # --------------------------------------------------------------------------
