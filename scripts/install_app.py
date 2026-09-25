@@ -111,6 +111,18 @@ def default_data_root() -> Path:
     return Path.home() / "powermill-ai"
 
 
+def check_folder(path: Path) -> str:
+    """Пусто — писать можно; иначе текст проблемы (для вопроса пользователю)."""
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        probe = path / ".powerMillAI_probe"
+        probe.write_text("проверка", encoding="utf-8")
+        probe.unlink()
+    except OSError as error:
+        return f"в папку «{path}» писать нельзя: {error}"
+    return ""
+
+
 def write_settings(data_root: Path, extra: dict | None = None) -> Path:
     """Пишет install.json — из него программа узнаёт, где её данные."""
     settings = {"data_root": str(data_root), "installed_at": _stamp()}
@@ -338,8 +350,19 @@ def main() -> int:
         printer.print("  Тяжёлые данные (справка, базы, отчёты) лежат отдельно "
                       "от программы.")
         printer.print(f"  По умолчанию: {default_root}")
-        data_root = Path(ask("  Папка данных (Enter — по умолчанию): ",
-                             str(default_root)))
+        data_root = Path(default_root)
+        for attempt in range(3):
+            answer = ask("  Папка данных (Enter — по умолчанию): ", str(data_root))
+            data_root = Path(answer)
+            problem = check_folder(data_root)
+            if not problem:
+                break
+            printer.print(f"  (!) {problem}")
+            printer.print("      Диск может быть не подключён или нет прав — "
+                          "выбери другую папку.")
+        else:
+            printer.print(f"  Возьму доступную папку: {default_root}")
+            data_root = default_root
     write_settings(data_root)
     make_folders(data_root, printer)
     printer.print(f"  ✔ записал настройку: {CODE_DIR / 'install.json'}")

@@ -38,6 +38,7 @@ KNOWN_REPORTS = (
     ("pm_flow_report.txt", "«Делай»: план, выполнение, проверки, NC (шаг 3.6)"),
     ("pm_plugin_build_report.txt", "Сборка плагина-панели (шаг 2.3б, пункт 38)"),
     ("doctor_report.txt", "Проверка компьютера (пункт 40)"),
+    ("pm_link_report.txt", "Проверка связи с PowerMill (пункт 41)"),
     ("uninstall_report.txt", "Удаление программы"),
     ("pm_tool_word.txt", "Слово создания фрезы, которое сработало"),
     ("pm_project.txt", "Снимок проекта от макроса PowerMill (пункт 24)"),

@@ -181,6 +181,9 @@ def check_modules() -> list[Check]:
 
 
 def check_data_root(data_root: Path | str = DATA_ROOT) -> Check:
+    import config
+
+    notes = list(getattr(config, "DATA_ROOT_NOTE", []))
     root = Path(data_root)
     try:
         root.mkdir(parents=True, exist_ok=True)
@@ -197,6 +200,12 @@ def check_data_root(data_root: Path | str = DATA_ROOT) -> Check:
         size_hint = f", свободно {usage.free / 1024 ** 3:.0f} ГБ"
     except OSError:
         pass
+    if notes:
+        # Папку пришлось взять другую (например, диска E: нет) — говорим прямо
+        # и подсказываем, как выбрать свою.
+        return Check("Папка данных", STATUS_WARN, f"{root}{size_hint}",
+                     "\n".join(notes) + "\nВыбрать другую: кнопка «Папка данных…» "
+                     "в окне приложения или install.bat.")
     return Check("Папка данных", STATUS_OK, f"{root}{size_hint}")
 
 

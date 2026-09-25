@@ -35,11 +35,7 @@ def _settings_file_value(key: str) -> str | None:
     """Читает значение из install.json (пишет установщик). Ничего не ломает."""
     import json
 
-    candidates = []
-    custom = os.getenv("POWERMILL_AI_SETTINGS")
-    if custom:
-        candidates.append(Path(custom))
-    candidates.append(CODE_DIR / "install.json")
+    candidates = [settings_path()]
     for path in candidates:
         try:
             if not path.exists():
@@ -53,11 +49,117 @@ def _settings_file_value(key: str) -> str | None:
     return None
 
 
-DATA_ROOT = Path(
-    os.getenv("POWERMILL_DATA_ROOT")
-    or _settings_file_value("data_root")
-    or "E:/powermill-ai"
-)
+def _default_root() -> Path:
+    """Папка по умолчанию, если ничего не задано: диск E:, если он есть."""
+    if os.sys.platform == "win32" and Path("E:/").exists():
+        return Path("E:/powermill-ai")
+    if os.sys.platform == "win32":
+        base = os.getenv("LOCALAPPDATA") or str(Path.home())
+        return Path(base) / "PowerMillAI"
+    return Path.home() / "powermill-ai"
+
+
+def _fallback_root() -> Path:
+    """Куда переехать, если выбранная папка недоступна (диска нет и т.п.)."""
+    if os.sys.platform == "win32":
+        base = os.getenv("LOCALAPPDATA") or str(Path.home())
+        return Path(base) / "PowerMillAI"
+    return Path.home() / "powermill-ai"
+
+
+def settings_path() -> Path:
+    """Файл настроек: тот, что задан переменной, иначе install.json рядом с кодом.
+
+    Пишем ровно в тот файл, откуда читаем, — иначе выбор папки не запомнится
+    (переменная окружения снова победила бы при следующем запуске).
+    """
+    custom = os.getenv("POWERMILL_AI_SETTINGS")
+    return Path(custom) if custom else CODE_DIR / "install.json"
+
+
+def requested_data_root() -> tuple[Path, str]:
+    """Откуда взялась папка данных и какая она (для объяснения пользователю)."""
+    env_value = os.getenv("POWERMILL_DATA_ROOT")
+    if env_value:
+        return Path(env_value), "переменная POWERMILL_DATA_ROOT"
+    settings_value = _settings_file_value("data_root")
+    if settings_value:
+        return Path(settings_value), "настройка install.json"
+    return _default_root(), "значение по умолчанию"
+
+
+def _try_create(paths: tuple[Path, ...], root: Path) -> str | None:
+    """Создаёт папки. Возвращает текст ошибки или None, если всё хорошо."""
+    error_text: str | None = None
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        return f"сама папка {root}: {error}"
+    for folder in paths:
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            error_text = f"{folder}: {error}"
+    return error_text
+
+
+# === Запомнить выбранную папку данных ===
+def save_data_root(path: Path | str, extra: dict | None = None) -> Path:
+    """Пишет install.json рядом с кодом — выбор папки данных пользователем.
+
+    Файл читается при следующем запуске (см. requested_data_root выше), поэтому
+    ничего не нужно прописывать в переменных окружения.
+    """
+    import json
+    import time
+
+    data = {
+        "data_root": str(Path(path)),
+        "chosen_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    if extra:
+        data.update(extra)
+    target = settings_path()
+    target.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+                      encoding="utf-8")
+    return target
+
+DATA_ROOT, DATA_ROOT_SOURCE = requested_data_root()
+DATA_ROOT_NOTE: list[str] = []
+
+_SUBFOLDERS = ("data/pdf", "data/videos", "data/macros", "data/forums",
+               "chroma_db", "output")
+_IS_WINDOWS = os.sys.platform == "win32"
+_MAKE_FOLDERS = _IS_WINDOWS or "POWERMILL_DATA_ROOT" in os.environ
+
+if _MAKE_FOLDERS:
+    _error = _try_create(tuple(DATA_ROOT / sub for sub in _SUBFOLDERS), DATA_ROOT)
+    if _error:
+        # Диска нет, прав нет, путь отключён — НЕ падаем и НЕ сыплем ошибками.
+        # Переезжаем в доступную папку и объясняем это одной понятной строкой,
+        # а выбор запоминаем в install.json, чтобы спросить больше не пришлось.
+        _bad_root = DATA_ROOT
+        DATA_ROOT = _fallback_root()
+        _error2 = _try_create(tuple(DATA_ROOT / sub for sub in _SUBFOLDERS), DATA_ROOT)
+        DATA_ROOT_NOTE.append(
+            f"Папку данных «{_bad_root}» использовать не получилось ({_error}).")
+        if _error2:
+            DATA_ROOT_NOTE.append(
+                f"И папку «{DATA_ROOT}» тоже: {_error2}. Данные могут не сохраняться — "
+                "выбери папку в окне приложения (кнопка «Папка данных…»).")
+        else:
+            DATA_ROOT_NOTE.append(
+                f"Работаю с папкой «{DATA_ROOT}». Выбрать другую можно в окне "
+                "приложения (кнопка «Папка данных…») или запуском install.bat.")
+            try:
+                save_data_root(DATA_ROOT)
+                DATA_ROOT_NOTE.append("Выбор записан в install.json — больше "
+                                      "спрашивать не буду.")
+            except OSError:
+                DATA_ROOT_NOTE.append("Записать выбор в install.json не удалось — "
+                                      "спрошу при следующем запуске.")
+        for _line in DATA_ROOT_NOTE:
+            print(f"⚠ {_line}")
 
 DATA_DIR = DATA_ROOT / "data"
 PDF_DIR = DATA_DIR / "pdf"
@@ -68,17 +170,6 @@ CHROMA_DIR = DATA_ROOT / "chroma_db"
 OUTPUT_DIR = DATA_ROOT / "output"
 # Индекс keyword-поиска по справке (SQLite FTS5, встроен в Python)
 HELP_SEARCH_DB = Path(os.getenv("POWERMILL_HELP_SEARCH_DB", str(DATA_ROOT / "help_search.db")))
-
-_IS_WINDOWS = os.sys.platform == "win32"
-for _d in (PDF_DIR, VIDEO_DIR, MACRO_DIR, FORUM_DIR, CHROMA_DIR, OUTPUT_DIR):
-    # На Linux/macOS без POWERMILL_DATA_ROOT не создаём каталог «E:/...»
-    # (это путь диска E: на Windows; в Unix он превратился бы в мусорную папку).
-    if not _IS_WINDOWS and "POWERMILL_DATA_ROOT" not in os.environ:
-        continue
-    try:
-        _d.mkdir(parents=True, exist_ok=True)
-    except OSError as _e:  # например, диска E: нет
-        print(f"⚠ Не удалось создать папку {_d}: {_e}")
 
 # === Локальная HTML-справка PowerMill (только чтение, НЕ создаём) ===
 # Папки, которые сканирует src.html_parser (существующие — берутся все):

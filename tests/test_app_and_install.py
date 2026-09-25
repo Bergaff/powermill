@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from src import app_window, doctor, pm_buttons, shortcuts
+from src import app_window, doctor, link_check, pm_buttons, shortcuts
 
 
 # --------------------------------------------------------------------------
@@ -291,3 +291,244 @@ def test_config_reads_install_json(tmp_path):
                           cwd=str(project), env=env, capture_output=True, text=True)
     assert done.returncode == 0, done.stderr
     assert done.stdout.strip() == str(data_root)
+
+
+# --------------------------------------------------------------------------
+# Папка данных: переезд и выбор пользователем
+# --------------------------------------------------------------------------
+def test_config_moves_to_working_folder_when_drive_is_gone(tmp_path):
+    """Диска E: нет (частый случай на другом компьютере) — работаем, но говорим.
+
+    Проверяем отдельным процессом: config читается при импорте.
+    """
+    import json
+    import os
+    import subprocess
+
+    settings = tmp_path / "install.json"
+    settings.write_text(json.dumps({"data_root": "E:/powermill-ai"}),
+                        encoding="utf-8")
+    env = dict(os.environ)
+    env["POWERMILL_AI_SETTINGS"] = str(settings)
+    env["POWERMILL_DATA_ROOT"] = "/нет/такого/диска/папка"
+    env["APP_MODE"] = "eco"
+    project = Path(__file__).resolve().parent.parent
+
+    code = ("import config; print(config.DATA_ROOT); "
+            "print(len(config.DATA_ROOT_NOTE)); print(config.OUTPUT_DIR.exists())")
+    done = subprocess.run([sys.executable, "-c", code], cwd=str(project), env=env,
+                          capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
+    # config печатает предупреждения о переезде — берём последние три строки
+    root, notes, output_exists = done.stdout.strip().splitlines()[-3:]
+    assert root != "/нет/такого/диска/папка"        # переехали
+    assert int(notes) >= 1                          # и объяснили почему
+    assert output_exists == "True"                  # папка вывода реально есть
+    # переезд запомнен, чтобы не спрашивать снова
+    assert json.loads(settings.read_text(encoding="utf-8"))["data_root"] == root
+
+
+def test_save_data_root_writes_settings(tmp_path, monkeypatch):
+    import importlib
+
+    import config as config_module
+
+    monkeypatch.setattr(config_module, "CODE_DIR", tmp_path)
+    path = config_module.save_data_root(tmp_path / "данные")
+    assert path.exists()
+    text = path.read_text(encoding="utf-8")
+    assert "data_root" in text and "chosen_at" in text
+
+
+def test_folder_choice_accepts_writable_folder(tmp_path):
+    lines = app_window.apply_folder_choice(tmp_path / "мои данные")
+    text = "\n".join(lines)
+    assert "✔" in text
+    assert (tmp_path / "мои данные" / "output").exists()
+    assert (tmp_path / "мои данные" / "data" / "pdf").exists()
+
+
+def test_folder_choice_refuses_unwritable_folder(tmp_path):
+    bad = tmp_path / "файл"           # это файл, а не папка
+    bad.write_text("не папка", encoding="utf-8")
+    lines = app_window.apply_folder_choice(bad)
+    assert "(!)" in "\n".join(lines)
+
+
+def test_data_root_check_warns_after_move(tmp_path, monkeypatch):
+    """Если папку пришлось взять другую, проверка говорит об этом прямо."""
+    import config
+
+    monkeypatch.setattr(config, "DATA_ROOT_NOTE",
+                        ["Папку данных «E:/powermill-ai» использовать не получилось"],
+                        raising=False)
+    check = doctor.check_data_root(tmp_path)
+    assert check.status == doctor.STATUS_WARN
+    assert "Папка данных" in check.advice
+    assert "Папка данных…" in check.advice
+
+
+def test_installer_folder_check(tmp_path):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "install_app", Path(__file__).resolve().parent.parent
+        / "scripts" / "install_app.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    assert module.check_folder(tmp_path / "можно") == ""
+    bad = tmp_path / "файл"
+    bad.write_text("я файл", encoding="utf-8")
+    assert "писать нельзя" in module.check_folder(bad)
+
+
+def test_config_notes_explain_the_choice():
+    text = "\n".join(app_window.config_notes())
+    assert "Папка данных" in text
+
+
+# --------------------------------------------------------------------------
+# Связь с PowerMill (пункт 41)
+# --------------------------------------------------------------------------
+def test_link_check_reports_steps():
+    report = link_check.run(with_roundtrip=False)
+    steps = [step for step, _status, _text in report.steps]
+    assert steps[:3] == ["pywin32", "process", "com"]
+    text = report.format()
+    assert "Мост к COM" in text and "PowerMill запущен" in text
+    if not report.connected:
+        assert report.advice, "без связи должны быть советы"
+
+
+def test_link_check_marks_missing_bridge(monkeypatch):
+    from src import pm_com
+
+    monkeypatch.setattr(pm_com, "bridges", lambda: {"pywin32": False})
+    monkeypatch.setattr(pm_com, "connect", lambda: (None, "PowerMill не запущен"))
+    report = link_check.run()
+    text = report.format()
+    assert "✘" in text
+    assert "пункт 27" in text
+    assert report.roundtrip is None          # делом не проверяли
+    assert "Связи с PowerMill нет" in report.summary()
+
+
+def test_link_check_roundtrip_proves_the_link(tmp_path, monkeypatch):
+    """PowerMill выполнил наш макрос и записал файл — значит, связь есть."""
+    from src import pm_com, pm_macro
+
+    trace = tmp_path / "pm_trace_1.txt"
+    trace.write_text("старое", encoding="utf-8")
+    monkeypatch.setattr(pm_macro, "trace_files", lambda: [trace])
+    # макрос кладём сами, чтобы проверка не пыталась его пересобирать
+    macro_dir = tmp_path / "pm_macros"
+    macro_dir.mkdir()
+    (macro_dir / "PM_AI_TEST.mac").write_text("// макрос", encoding="cp1251")
+    monkeypatch.setattr(pm_macro, "MACRO_DIR", macro_dir)
+
+    class FakeSession:
+        version = "2026000"
+
+        def counts(self):
+            return {"models": 1, "tools": 2, "toolpaths": 3, "ncprograms": 0}
+
+        def execute(self, command):
+            # PowerMill выполнил макрос -> файл-отметка обновилась
+            trace.write_text("PowerMill AI: шаг 1 ок", encoding="utf-8")
+            return True, "DoCommand('MACRO ...') -> OK"
+
+    monkeypatch.setattr(pm_com, "bridges", lambda: {"pywin32": True})
+    monkeypatch.setattr(pm_com, "connect", lambda: (FakeSession(), "ок"))
+
+    report = link_check.run()
+    assert report.roundtrip is True
+    assert report.connected
+    assert "связь работает в обе стороны" in "\n".join(
+        text for _step, _status, text in report.steps)
+    assert "проверена делом" in report.summary()
+
+
+def test_link_check_roundtrip_detects_change_by_size(tmp_path, monkeypatch):
+    """Даже если время файла не изменилось, размер выдаёт правку."""
+    from src import pm_com, pm_macro
+
+    trace = tmp_path / "pm_trace_1.txt"
+    trace.write_text("WAIT", encoding="utf-8")
+    monkeypatch.setattr(pm_macro, "trace_files", lambda: [trace])
+    macro_dir = tmp_path / "pm_macros"
+    macro_dir.mkdir()
+    (macro_dir / "PM_AI_TEST.mac").write_text("// макрос", encoding="cp1251")
+    monkeypatch.setattr(pm_macro, "MACRO_DIR", macro_dir)
+
+    class Session:
+        version = "2026000"
+
+        def counts(self):
+            return {}
+
+        def execute(self, command):
+            return True, "ок"
+
+    monkeypatch.setattr(pm_com, "bridges", lambda: {"pywin32": True})
+    monkeypatch.setattr(pm_com, "connect", lambda: (Session(), "ок"))
+    monkeypatch.setattr(link_check, "ROUNDTRIP_TIMEOUT", 1.0)
+
+    # PowerMill «выполнил» макрос: файл перезаписан с тем же временем, но длиннее
+    state = link_check._trace_states()
+    trace.write_text("powermill ai: шаг 1 ок", encoding="utf-8")
+    stat_before = state[trace][0]
+    import os
+
+    os.utime(trace, (stat_before, stat_before))     # время не меняем
+    monkeypatch.setattr(link_check, "_trace_states", lambda: state)
+    found = link_check._wait_for_trace(state)
+    assert found == trace
+
+
+def test_link_check_roundtrip_fails_when_macro_not_executed(monkeypatch, tmp_path):
+    from src import pm_com, pm_macro
+
+    trace = tmp_path / "pm_trace_1.txt"
+    trace.write_text("старое", encoding="utf-8")
+    monkeypatch.setattr(pm_macro, "trace_files", lambda: [trace])
+    macro_dir = tmp_path / "pm_macros"
+    macro_dir.mkdir()
+    (macro_dir / "PM_AI_TEST.mac").write_text("// макрос", encoding="cp1251")
+    monkeypatch.setattr(pm_macro, "MACRO_DIR", macro_dir)
+    monkeypatch.setattr(link_check, "ROUNDTRIP_TIMEOUT", 0.6)
+    monkeypatch.setattr(link_check, "POLL_INTERVAL", 0.1)
+
+    class SilentSession:
+        version = "2026000"
+
+        def counts(self):
+            return {}
+
+        def execute(self, command):
+            return True, "принял, но не выполнил"
+
+    monkeypatch.setattr(pm_com, "bridges", lambda: {"pywin32": True})
+    monkeypatch.setattr(pm_com, "connect", lambda: (SilentSession(), "ок"))
+
+    report = link_check.run()
+    assert report.roundtrip is False
+    assert "односторонняя" in report.summary()
+
+
+def test_link_report_file_written(tmp_path):
+    report = link_check.LinkReport()
+    report.add("com", "ok", "подключён")
+    report.add("roundtrip", "ok", "файл обновлён")
+    path = tmp_path / "pm_link_report.txt"
+    path.write_text(link_check.format_report(report), encoding="utf-8")
+    text = path.read_text(encoding="utf-8")
+    assert "пункт 41" in text and "ИТОГ:" in text
+
+
+def test_window_has_link_and_setup_buttons():
+    labels = [plan.action.label for plan in app_window.plans()]
+    assert "Связь с PowerMill" in labels
+    assert "Проверка компьютера" in labels
+    groups = [name for name, _items in app_window.grouped_plans()]
+    assert pm_buttons.GROUP_SETUP in groups

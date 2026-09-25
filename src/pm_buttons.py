@@ -38,6 +38,7 @@ MACRO_FOLDERS: tuple[str, ...] = ("output/pm_macros", "output", "output/macros")
 GROUP_MACROS = "Внутри PowerMill (макросы)"
 GROUP_SCENARIOS = "Сценарии ассистента (отдельное окно)"
 GROUP_BROWSER = "В браузере"
+GROUP_SETUP = "Проверка и настройка"
 
 
 @dataclass(frozen=True)
@@ -164,6 +165,28 @@ ACTIONS: tuple[Action, ...] = (
         bat=r"scripts\show_reports.bat",
         launcher="PM_AI_REPORTS.mac",
         asks=True,
+    ),
+    # --- проверки: вывод идёт в журнал ---
+    Action(
+        key="link",
+        label="Связь с PowerMill",
+        hint="Проверить связь приложения и PowerMill делом: он выполнит наш макрос "
+             "(пункт 41)",
+        kind="inline",
+        target="scripts.check_link",
+        bat=r"scripts\check_link.bat",
+        launcher="PM_AI_LINK.mac",
+        group=GROUP_SETUP,
+    ),
+    Action(
+        key="doctor",
+        label="Проверка компьютера",
+        hint="Python, библиотеки, папки, PowerMill, макросы, лента, плагин (пункт 40)",
+        kind="inline",
+        target="scripts.doctor",
+        bat=r"scripts\doctor.bat",
+        launcher="PM_AI_DOCTOR.mac",
+        group=GROUP_SETUP,
     ),
     # --- без вопросов: результат идёт в журнал панели ---
     Action(
