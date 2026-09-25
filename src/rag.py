@@ -206,9 +206,26 @@ class PowerMillAI:
         set_process_priority(CURRENT_MODE)
 
         if store is None:
-            from src.vectorstore import PowerMillVectorStore
+            from src.vectorstore import MissingLibrary, PowerMillVectorStore
 
-            store = PowerMillVectorStore()
+            try:
+                store = PowerMillVectorStore()
+            except MissingLibrary as error:
+                # Библиотек для векторов нет — работаем по ключевым словам.
+                # Говорим прямо, что делать, и не мешаем остальному.
+                if verbose:
+                    print("⚠ Векторного поиска нет: " + str(error).splitlines()[0])
+                    print("  Пока ищу по ключевым словам. Поставить библиотеки: "
+                          "пункт 43 меню с ключом --all.")
+                from src.retrieval import NullVectorStore
+
+                store = NullVectorStore()
+            except Exception as error:                        # noqa: BLE001
+                if verbose:
+                    print(f"⚠ Векторная база недоступна: {error}")
+                from src.retrieval import NullVectorStore
+
+                store = NullVectorStore()
         self.store = store
 
         self.fts = fts
@@ -492,9 +509,14 @@ class PowerMillAI:
     def stats(self) -> str:
         """Что сейчас в базе знаний."""
         st = self.store.stats()
-        lines = [f"🧠 Векторная база: {st['total']} чанков ({st['path']})"]
-        for key, cnt in sorted(st["by_type"].items(), key=lambda kv: -kv[1]):
-            lines.append(f"    {key:<15} {cnt}")
+        if getattr(self.store, "available", True) is False:
+            lines = ["🧠 Векторная база: нет — ищу по ключевым словам (FTS)"]
+            lines.append("    Поставить: пункт 43 меню с ключом --all, потом "
+                         "собрать пунктом 6.")
+        else:
+            lines = [f"🧠 Векторная база: {st['total']} чанков ({st['path']})"]
+            for key, cnt in sorted(st["by_type"].items(), key=lambda kv: -kv[1]):
+                lines.append(f"    {key:<15} {cnt}")
         if self.fts is not None:
             fst = self.fts.stats()
             lines.append(f"🔎 FTS-индекс: {fst['pages']} страниц, "

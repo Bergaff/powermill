@@ -6,14 +6,18 @@ setlocal
 cd /d "%~dp0"
 
 echo =========================================================
-echo   СБОРКА ВЕКТОРНОЙ БАЗЫ ChromaDB на диске E:
-echo   Долго: эмбеддинги на CPU, 10-60 минут.
-echo   Лучше на ночь: start_night_indexing.bat
+echo   ВЕКТОРНАЯ БАЗА (ChromaDB): смысловой поиск по справке
+echo   Долго: эмбеддинги на CPU, 10-60 минут. Лучше на ночь.
+echo   Прервать можно - следующий запуск продолжит с места остановки.
+echo   Нет библиотек? Сначала пункт 43 (доставить, ключ --all).
 echo =========================================================
 echo.
 
-if not exist "venv\Scripts\python.exe" goto no_venv
-call venv\Scripts\activate
+set "VENV=.venv\Scripts"
+if not exist "%VENV%\python.exe" set "VENV=venv\Scripts"
+if not exist "%VENV%\python.exe" goto no_venv
+set "PATH=%CD%\%VENV%;%PATH%"
+echo   Python: %CD%\%VENV%\python.exe
 
 python -m scripts.preflight reindex
 if errorlevel 1 goto failed
@@ -22,6 +26,7 @@ echo.
 echo Начинаю. Не выключай компьютер. Прервать - Ctrl+C.
 echo.
 python -m src.vectorstore
+if errorlevel 2 goto no_libs
 if errorlevel 1 goto build_failed
 
 echo.
@@ -34,9 +39,20 @@ echo.
 pause
 exit /b 0
 
+:no_libs
+echo.
+echo [!] Нет библиотек для векторной базы (chromadb / sentence-transformers).
+echo     Поставить: start_menu.bat -^> 43 (ключ --all) - это несколько
+echo     гигабайт, лучше ночью. Потом снова запусти этот пункт.
+echo     Отчёт: output\vector_db_report.txt
+echo.
+pause
+exit /b 2
+
 :no_venv
-echo [!] Нет venv - запусти setup.bat
-echo     Быстрый старт без ИИ: setup_light.bat
+echo [!] Нет виртуального окружения (ни .venv, ни venv).
+echo     Запусти install.bat - он создаст .venv и поставит библиотеки.
+echo     Библиотеки те же, что и программе: пункт 43 меню.
 echo.
 pause
 exit /b 1

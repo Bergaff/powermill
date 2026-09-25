@@ -62,6 +62,23 @@ def rrf_fuse(*ranked_lists: list[dict], weights: tuple[float, ...] | None = None
     return out
 
 
+class NullVectorStore:
+    """Заглушка вместо векторной базы: её может не быть (нет библиотек или пусто).
+
+    Нужна, чтобы чат работал по ключевым словам (FTS), а не падал: раньше
+    отсутствие ChromaDB ломало запуск целиком.
+    """
+
+    available = False
+    reason = "векторной базы нет"
+
+    def search(self, query: str, **kwargs) -> list[dict]:
+        return []
+
+    def stats(self) -> dict:
+        return {"total": 0, "by_type": {}, "path": "-"}
+
+
 class HybridRetriever:
     """Единая точка входа для поиска по базе знаний."""
 

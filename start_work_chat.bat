@@ -11,8 +11,11 @@ echo   Приоритет ниже среднего: PowerMill не тормоз
 echo =========================================================
 echo.
 
-if not exist "venv\Scripts\python.exe" goto no_venv
-call venv\Scripts\activate
+set "VENV=.venv\Scripts"
+if not exist "%VENV%\python.exe" set "VENV=venv\Scripts"
+if not exist "%VENV%\python.exe" goto no_venv
+set "PATH=%CD%\%VENV%;%PATH%"
+echo   Python: %CD%\%VENV%\python.exe
 
 python -m scripts.preflight chat
 if errorlevel 1 goto failed
@@ -36,9 +39,9 @@ if not defined PM_FROM_MENU pause
 exit /b 0
 
 :no_venv
-echo [!] Нет виртуального окружения.
-echo     Полная установка:  setup.bat
-echo     Без ИИ, быстро:    setup_light.bat
+echo [!] Нет виртуального окружения (ни .venv, ни venv).
+echo     Запусти install.bat - он создаст .venv и поставит библиотеки.
+echo     Библиотеки те же, что и программе: пункт 43 меню.
 echo.
 pause
 exit /b 1

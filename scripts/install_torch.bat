@@ -10,8 +10,11 @@ echo   Кэш pip должен лежать на E: (scripts\set_heavy_paths.bat
 echo =========================================================
 echo.
 
-if not exist "venv\Scripts\python.exe" goto no_venv
-call venv\Scripts\activate
+set "VENV=.venv\Scripts"
+if not exist "%VENV%\python.exe" set "VENV=venv\Scripts"
+if not exist "%VENV%\python.exe" goto no_venv
+set "PATH=%CD%\%VENV%;%PATH%"
+echo   Python: %CD%\%VENV%\python.exe
 
 if defined PIP_CACHE_DIR goto have_cache
 set "PIP_CACHE_DIR=E:\pip_cache"
@@ -40,8 +43,9 @@ if not defined PM_FROM_MENU pause
 exit /b 0
 
 :no_venv
-echo [!] Нет venv - сначала пункт 18 меню (быстрая установка)
-echo     или setup.bat для полной.
+echo [!] Нет виртуального окружения (ни .venv, ни venv).
+echo     Запусти install.bat - он создаст .venv и поставит библиотеки.
+echo     Библиотеки те же, что и программе: пункт 43 меню.
 echo.
 pause
 exit /b 1

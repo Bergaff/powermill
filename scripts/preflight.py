@@ -77,7 +77,7 @@ def check_parse() -> int:
 
     if not has_module("bs4"):
         warn("нет beautifulsoup4 — разберу встроенным парсером (медленнее, но работает)")
-        print("           -> для ускорения: setup_light.bat или setup.bat")
+        print("           -> для ускорения: install.bat --light (или setup_light.bat)")
     else:
         ok("beautifulsoup4 на месте")
 
@@ -112,7 +112,7 @@ def check_reindex() -> int:
     missing = [m for m in ("torch", "sentence_transformers", "chromadb") if not has_module(m)]
     if missing:
         bad("не установлены библиотеки: " + ", ".join(missing))
-        print("           -> запусти setup.bat")
+        print("           -> запусти install.bat (или пункт 43 меню)")
         print("           -> если не скачался pytorch: scripts\\install_torch.bat")
         problems += 1
     else:
@@ -137,13 +137,13 @@ def check_chat() -> int:
 
     missing = [m for m in ("ollama",) if not has_module(m)]
     if missing:
-        bad("нет библиотеки ollama (pip install ollama) — запусти setup.bat")
+        bad("нет библиотеки ollama — окно: кнопка «Установить недостающее»")
         problems += 1
     else:
         ok("клиент Ollama на месте")
 
     if not has_module("chromadb") or not has_module("sentence_transformers"):
-        bad("нет chromadb / sentence-transformers — запусти setup.bat")
+        bad("нет chromadb / sentence-transformers — пункт 43 меню с --all")
         problems += 1
     else:
         ok("chromadb и sentence-transformers на месте")

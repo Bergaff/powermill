@@ -8,13 +8,10 @@ echo   Ищу оффлайн-справку PowerMill и показываю её
 echo =========================================================
 echo.
 
-if exist "venv\Scripts\python.exe" (
-    call venv\Scripts\activate
-) else (
-    echo [!] Виртуального окружения нет - работаю системным Python.
-    echo     Если чего-то не хватает - запусти setup_light.bat (1 минута)
-    echo.
-)
+set "VENV=.venv\Scripts"
+if not exist "%VENV%\python.exe" set "VENV=venv\Scripts"
+if exist "%VENV%\python.exe" set "PATH=%CD%\%VENV%;%PATH%"
+if not exist "%VENV%\python.exe" echo [!] Виртуального окружения нет - работаю системным Python - поставь install.bat
 
 python -m scripts.dump_help_samples
 echo.

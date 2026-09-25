@@ -227,17 +227,60 @@ def check_data_root(data_root: Path | str = DATA_ROOT) -> Check:
 
 
 def check_chroma() -> Check:
+    """Есть ли векторная база и сколько в ней записей.
+
+    Список библиотек берём из src\\deps.py: если chromadb нет, пункт 6 не
+    сработает, и человек должен узнать об этом здесь, а не на середине сборки.
+    """
+    from src import deps, vectorstore
+
     folder = Path(CHROMA_DIR)
+    count = 0
+    report_note = ""
+    report = Path(vectorstore.REPORT_FILE)
+    if report.exists():
+        try:
+            text = report.read_text(encoding="utf-8", errors="replace")
+            for line in text.splitlines():
+                if "Записей в базе" in line:
+                    count = int("".join(ch for ch in line if ch.isdigit()) or 0)
+                if "Примечание" in line:
+                    report_note = line.split(":", 1)[-1].strip()
+        except (OSError, ValueError):
+            pass
+    if deps.missing(base=False, optional=True):
+        lack = [spec.package for spec in deps.missing(base=False, optional=True)
+                if spec.package in ("chromadb", "sentence-transformers")]
+        if lack and not folder.exists():
+            return Check("Векторная база (ChromaDB)", STATUS_WARN, "папки нет",
+                         "Нет библиотек: " + ", ".join(lack) +
+                         "\nПоставить: пункт 43 меню с ключом --all (это "
+                         "гигабайты, лучше ночью), потом собрать пунктом 6.")
     if not folder.exists():
         return Check("Векторная база (ChromaDB)", STATUS_WARN, "папки нет",
                      "Собери пунктом 6 меню (долго, лучше ночью) — тогда /ask "
-                     "будет искать по всему объёму справки.")
+                     "будет искать по всему объёму справки.\nПрервать можно: "
+                     "следующий запуск продолжит с того места, где остановился.")
     files = list(folder.glob("**/*"))
     if not files:
+        lack = [spec.package for spec in deps.missing(base=False, optional=True)
+                if spec.package in ("chromadb", "sentence-transformers")]
+        advice = ("Собери пунктом 6 меню — сборку можно прерывать, она "
+                  "продолжается с места остановки.")
+        if lack:
+            advice = ("Нет библиотек: " + ", ".join(lack) +
+                      "\nПоставить: пункт 43 меню с ключом --all (гигабайты, "
+                      "лучше ночью), потом собрать пунктом 6." + "\n" + advice)
         return Check("Векторная база (ChromaDB)", STATUS_WARN, "папка пустая",
-                     "Собери пунктом 6 меню.")
+                     advice)
+    if count:
+        detail = f"{count} записей, папка {folder}"
+        if report_note:
+            detail += f" ({report_note})"
+        return Check("Векторная база (ChromaDB)", STATUS_OK, detail)
     return Check("Векторная база (ChromaDB)", STATUS_OK,
-                 f"{len(files)} файлов в {folder}")
+                 f"{len(files)} файлов в {folder} (отчёта о сборке нет — "
+                 f"пункт 6 покажет числа)")
 
 
 def check_help_parsed(data_root: Path | str = DATA_ROOT) -> Check:
