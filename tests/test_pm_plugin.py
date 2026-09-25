@@ -49,6 +49,27 @@ def test_source_has_no_unfilled_placeholders():
         assert re.findall(r"@@[A-Z_]+@@", code) == []
 
 
+def test_source_runs_macros_inside_powermill():
+    """Кнопки-макросы панель выполняет в самом PowerMill, а не через батник."""
+    code = pm_plugin.build_source(spec())
+    # команда PowerMill собирается в C#-строке: "MACRO "<путь>""
+    assert 'string command = "MACRO' in code
+    assert 'path.Replace' in code
+    assert "setup_framework(string token, PluginServices services" in code
+    assert "Marshal.GetActiveObject(\"PowerMill.Application\")" in code
+    for method in ("DoCommand", "ExecuteEx", "Execute"):
+        assert method in code, method        # способы перебираются, а не выдуманы
+    assert "services." in code              # сначала пробуем службы плагина
+
+
+def test_source_marks_window_buttons_and_macro_buttons():
+    code = pm_plugin.build_source(spec())
+    assert "— окно" in code                 # батники со вопросами
+    assert "▶ " in code                     # макросы внутри PowerMill
+    for folder in pm_plugin.MACRO_FOLDERS:
+        assert folder in code
+
+
 def test_source_paths_are_escaped_exactly_once():
     """Путь в C#-литерале должен совпадать с настоящим (а не задваиваться)."""
     python = Path(r"E:\powermill-ai\.venv\Scripts\python.exe")
@@ -74,15 +95,36 @@ def test_source_has_balanced_braces_and_the_ui_variants():
 
 
 def test_every_button_points_to_a_real_scenario():
-    """Кнопка либо открывает существующий батник, либо запускает реальный модуль."""
+    """Кнопка запускает наш макрос, существующий батник или реальный модуль."""
+    kinds = set()
     for button in pm_plugin.PANE_BUTTONS:
-        if button.bat:
+        kinds.add(button.kind)
+        if button.kind == "macro":
+            assert button.target.endswith(".mac"), button.target
+        elif button.kind == "bat":
             # в исходнике путь записан по-виндовому — проверяем и его, и файл
-            assert (PROJECT / button.bat.replace("\\", "/")).exists(), button.bat
+            assert (PROJECT / button.target.replace("\\", "/")).exists(), button.target
         else:
-            module = PROJECT / (button.module.replace(".", "/") + ".py")
-            package = PROJECT / button.module.replace(".", "/") / "__init__.py"
-            assert module.exists() or package.exists(), button.module
+            module = PROJECT / (button.target.replace(".", "/") + ".py")
+            package = PROJECT / button.target.replace(".", "/") / "__init__.py"
+            assert module.exists() or package.exists(), button.target
+    assert kinds == {"macro", "bat", "inline"}   # все три вида кнопок есть
+
+
+def test_pane_buttons_come_from_the_shared_list():
+    """Панель и лента — из одного списка (src\\pm_buttons.py)."""
+    from src import pm_buttons
+
+    assert len(pm_plugin.PANE_BUTTONS) == len(pm_buttons.pane_actions())
+    assert [b.label for b in pm_plugin.PANE_BUTTONS] == \
+        [a.label for a in pm_buttons.pane_actions()]
+    assert [name for name, _items in pm_plugin.pane_groups()] == \
+        [name for name, _items in pm_buttons.pane_groups()]
+
+
+def test_pane_has_macro_buttons_that_run_inside_powermill():
+    macros = [b for b in pm_plugin.PANE_BUTTONS if b.kind == "macro"]
+    assert {b.target for b in macros} >= {"PM_AI_ASK.mac", "PM_AI_SNAPSHOT.mac"}
 
 
 def test_buttons_that_ask_questions_open_a_window():
@@ -171,7 +213,9 @@ def test_plan_lines_show_buttons_and_missing_pieces(tmp_path):
     text = "\n".join(pm_plugin.plan_lines(spec(output_dir=tmp_path),
                                           {"csc.exe": None, "regasm.exe": None},
                                           {"framework": [], "extra": []}))
-    assert "кнопок на панели: 9" in text
+    assert f"кнопок на панели: {len(pm_plugin.PANE_BUTTONS)}" in text
+    assert "из того же списка, что лента" in text
+    assert "выполнить макрос PM_AI_ASK.mac внутри PowerMill" in text
     assert "НЕ НАЙДЕН" in text
     assert "— не найден" in text
 

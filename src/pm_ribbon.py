@@ -41,26 +41,16 @@ from datetime import datetime
 from pathlib import Path
 
 from config import OUTPUT_DIR
-from src import pml_files, pm_macro
+from src import pm_buttons, pml_files, pm_macro
 
 REPORT_FILE = OUTPUT_DIR / "pm_ribbon_report.txt"
 RIBBON_TAB_LABEL = "PowerMill AI"
 
-# Кнопки панели: (подпись, имя макроса, что запускает, подсказка)
-RIBBON_BUTTONS: tuple[tuple[str, str, str, str], ...] = (
-    ("Ассистент (вопрос)", "PM_AI_ASK.mac", "PM_AI_ASK.mac",
-     "Спросить ассистента, не выходя из PowerMill"),
-    ("Чат в браузере", "PM_AI_CHAT.mac", "scripts\\chat_ui.bat",
-     "Интерфейс с прогрессом и отчётами (пункт 32)"),
-    ("Режимы резания", "PM_AI_CUTTING.mac", "start_cutting.bat",
-     "Калькулятор S/F по материалу и фрезе"),
-    ("Фреза в проект", "PM_AI_TOOL.mac", "scripts\\probe_tool.bat",
-     "Создать фрезу и узнать рабочее слово (пункт 33)"),
-    ("Черновая операция", "PM_AI_OPERATION.mac", "scripts\\make_operation.bat",
-     "Инструмент + заготовка + траектория (пункт 31)"),
-    ("Снимок проекта", "PM_AI_SNAPSHOT.mac", "PM_AI_SNAPSHOT.mac",
-     "Ассистент узнает имена объектов проекта"),
-)
+# Кнопки вкладки берём из ОДНОГО списка действий (src\pm_buttons.py) — того же,
+# из которого собирается панель плагина (пункт 38). Раньше списки были разные и
+# уже разошлись: на ленте не было проверок, NC и «СДЕЛАЙ».
+# Формат прежний: (подпись, макрос-запускатель, что запускает, подсказка).
+RIBBON_BUTTONS: tuple[tuple[str, str, str, str], ...] = pm_buttons.ribbon_buttons()
 
 # Как в файле ленты могут называться атрибуты подписи и «нажми меня»
 LABEL_ATTRS = ("label", "name", "text", "caption", "title", "tooltip", "description")

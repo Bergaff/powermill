@@ -1,13 +1,28 @@
 """
-Плагин-окно «PowerMill AI» внутри PowerMill (шаг 2.3б, пункт 38).
+Плагин-панель «PowerMill AI» внутри PowerMill (шаг 2.3б, пункт 38).
 
 Зачем плагин, если уже есть макросы
 -----------------------------------
 Макросы — это «руки»: они умеют всё то же, что человек за клавиатурой, и уже
 работают (пункты 30–37). Плагин — это «лицо»: собственное окно-панель внутри
 PowerMill, кнопки без ухода в консоль, журнал того, что делает ассистент.
-Мозг в обоих случаях один и тот же — наш Python (те же сценарии пунктов 3, 31,
-33, 35, 36, 37), поэтому плагин ничего не «переписывает», а показывает.
+
+Объединение (главное в этом модуле)
+-----------------------------------
+Кнопки панели, кнопки ленты (пункт 34) и макросы-запускатели берутся из **одного
+списка** — `src\\pm_buttons.py`. Поэтому:
+
+* лента и панель не расходятся: добавил действие в список — оно появилось и там,
+  и там;
+* кнопки-макросы («Ассистент», «Снимок проекта») панель выполняет **внутри
+  самого PowerMill**: берёт объект PowerMILL (из `PluginServices`, а если не
+  получилось — через `Marshal.GetActiveObject`) и отправляет ему команду
+  `MACRO "<путь>"`, перебирая способы вызова и печатая в журнал тот, который
+  сработал. Если не сработал ни один — честно пишет об этом и советует кнопку на
+  ленте;
+* сценарии с вопросами (черновая, проверки, NC, «СДЕЛАЙ») открываются отдельным
+  окном: так же, как двойным щелчком по батнику. Спрашивать в панели нечего —
+  вопросам нужен ввод.
 
 Что здесь есть
 --------------
@@ -34,6 +49,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from config import DATA_ROOT, OUTPUT_DIR
+from src import pm_buttons
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 PLUGIN_ROOT = DATA_ROOT / "plugin"
@@ -70,50 +86,65 @@ EXTRA_DLL_NAMES = (
 DEFAULT_PM_VERSION = "2026.0"
 REPORT_FILE = OUTPUT_DIR / "pm_plugin_build_report.txt"
 
+# Где искать наши макросы (PM_AI_ASK.mac и другие) — на случай другой раскладки
+MACRO_FOLDERS = ("output", "output/pm_macros", "macros")
+
 
 # --------------------------------------------------------------------------
-# Кнопки панели: те же сценарии, что и на ленте (пункт 34)
+# Кнопки панели — из общего списка действий (src\pm_buttons.py)
 # --------------------------------------------------------------------------
 @dataclass(frozen=True)
 class PluginButton:
-    """Кнопка панели.
+    """Кнопка панели, собранная из общего списка действий.
 
-    * `bat` пустой — сценарий идёт прямо в панель (вопросов не задаёт);
-    * `bat` задан — сценарий спрашивает технолога, поэтому запускаем его
-      отдельным окном, как двойным щелчком (иначе он будет ждать ввода,
-      которого в панели нет).
+    * `kind="macro"` — панель выполняет наш макрос **внутри PowerMill**;
+    * `kind="bat"` — сценарий спрашивает технолога, поэтому открываем отдельное
+      окно (как двойным щелчком по батнику);
+    * `kind="inline"` — сценарий без вопросов: его вывод идёт в журнал панели.
     """
 
     label: str
-    module: str
     hint: str = ""
+    kind: str = "inline"
+    target: str = ""
     arguments: str = ""
     bat: str = ""
+    group: str = pm_buttons.GROUP_SCENARIOS
+    launcher: str = ""
+
+    @property
+    def is_macro(self) -> bool:
+        return self.kind == "macro"
 
 
-PANE_BUTTONS: tuple[PluginButton, ...] = (
-    PluginButton("Режимы резания", "src.cutting", "Калькулятор S/F (пункт 3)",
-                 bat="start_cutting.bat"),
-    PluginButton("Фреза в проект", "scripts.probe_tool", "Создать фрезу (пункт 33)",
-                 bat="scripts\\probe_tool.bat"),
-    PluginButton("Черновая операция", "scripts.make_operation",
-                 "Инструмент + заготовка + траектория (пункт 31)",
-                 bat="scripts\\make_operation.bat"),
-    PluginButton("Проверки (3.4)", "scripts.check_toolpaths",
-                 "Зарезы и столкновения (пункт 35)",
-                 bat="scripts\\check_toolpaths.bat"),
-    PluginButton("NC-программа (3.5)", "scripts.make_nc", "Вывод NC (пункт 36)",
-                 bat="scripts\\make_nc.bat"),
-    PluginButton("СДЕЛАЙ (3.6)", "scripts.make_flow",
-                 "План → выполнение → проверки → NC (пункт 37)",
-                 bat="scripts\\make_flow.bat"),
-    PluginButton("Снимок проекта", "scripts.load_project",
-                 "Ассистент узнаёт имена объектов проекта"),
-    PluginButton("Отчёты", "scripts.show_reports", "Открыть отчёты в блокноте",
-                 bat="scripts\\show_reports.bat"),
-    PluginButton("Чат в браузере", "scripts.chat_ui", "Интерфейс пункта 32",
-                 arguments="--open"),
-)
+def _as_button(action: pm_buttons.Action) -> PluginButton:
+    return PluginButton(
+        label=action.label,
+        hint=action.hint,
+        kind=action.kind,
+        target=action.target,
+        arguments=action.arguments,
+        bat=action.bat,
+        group=action.group,
+        launcher=action.launcher,
+    )
+
+
+PANE_BUTTONS: tuple[PluginButton, ...] = tuple(
+    _as_button(action) for action in pm_buttons.pane_actions())
+
+
+def pane_groups() -> list[tuple[str, list[PluginButton]]]:
+    """Кнопки панели по группам — в порядке объявления."""
+    groups: list[tuple[str, list[PluginButton]]] = []
+    for button in PANE_BUTTONS:
+        for name, items in groups:
+            if name == button.group:
+                items.append(button)
+                break
+        else:
+            groups.append((button.group, [button]))
+    return groups
 
 
 @dataclass
@@ -128,6 +159,17 @@ class PluginSpec:
     buttons: tuple[PluginButton, ...] = PANE_BUTTONS
     output_dir: Path = PROJECT_DIR
     guid: str = PLUGIN_GUID
+
+    def groups(self) -> list[tuple[str, list[PluginButton]]]:
+        groups: list[tuple[str, list[PluginButton]]] = []
+        for button in self.buttons:
+            for name, items in groups:
+                if name == button.group:
+                    items.append(button)
+                    break
+            else:
+                groups.append((button.group, [button]))
+        return groups
 
 
 def python_exe(project_dir: Path | str = PROJECT_ROOT) -> Path | None:
@@ -165,249 +207,102 @@ def _version_literal(version: str) -> str:
     return ", ".join(numbers)
 
 
-def _button_calls(spec: PluginSpec, indent: str) -> list[str]:
-    lines: list[str] = []
-    for button in spec.buttons:
-        lines.append(
-            f'{indent}AddButton(panel, "{cs_str(button.label)}", '
-            f'"{cs_str(button.module)}", "{cs_str(button.arguments)}", '
-            f'"{cs_str(button.bat)}");'
-        )
-    return lines
-
-
-WPF_HEADER = """// ============================================================
-//  PowerMill AI — панель-плагин внутри PowerMill (пункт 38, шаг 2.3б)
-//  Файл СОБРАН скриптом scripts\\build_plugin.bat — правки затрутся.
-//  Собрано: @@WHEN@@
-//
-//  Что это: окно-панель с кнопками сценариев и журналом.
-//  Что это НЕ делает: не заменяет Python-мозг ассистента — кнопки запускают
-//  те же самые сценарии (пункты 3, 31, 33, 35, 36, 37).
-// ============================================================
-using System;
-using System.Diagnostics;
-using System.IO;
-using System.Runtime.InteropServices;
-using System.Text;
-using System.Windows;
-using System.Windows.Controls;
-using Delcam.Plugins.Framework;
-
-namespace @@NAMESPACE@@
-{
-    // Атрибуты COM: после `regasm PowerMillAI.dll /register /codebase` PowerMill
-    // находит плагин по этому GUID.
-    [Guid("@@GUID@@")]
-    [ClassInterface(ClassInterfaceType.None)]
-    [ComVisible(true)]
-    public class @@CLASS@@ : PluginFrameworkWithPanes
-    {
-        private AiPane m_pane;
-
-        public override string PluginName { get { return "@@NAME@@"; } }
-        public override string PluginAuthor { get { return "PowerMill AI"; } }
-        public override string PluginDescription
+# Общая часть панели: запуск сценариев, выполнение макросов ВНУТРИ PowerMill,
+# журнал. Одинакова для WPF и WinForms — отличается только создание контролов.
+RUNNER = '''        // ---- выполнить наш макрос внутри PowerMill ----
+        private void RunMacro(string title, string macroFile)
         {
-            get { return "Ассистент технолога: режимы, фреза, черновая, проверки, NC"; }
-        }
-        public override string PluginIconPath { get { return null; } }
-        public override Version PluginVersion { get { return new Version(1, 0, 0); } }
-        public override Version PowerMILLVersion { get { return new Version(@@PMVERSION@@); } }
-        public override bool PluginHasOptions { get { return false; } }
-        public override string PluginAssemblyName { get { return "@@ASSEMBLY@@"; } }
-        public override Guid PluginGuid { get { return new Guid("@@GUID@@"); } }
-
-        protected override void register_panes()
-        {
-            m_pane = new AiPane();
-            register_pane(new PaneDefinition(m_pane, 900, 375, "@@NAME@@", null));
-        }
-    }
-
-    // Панель: кнопки сценариев + журнал вывода
-    public class AiPane : UserControl
-    {
-        private const string PYTHON = "@@PYTHON@@";
-        private const string PROJECT = "@@PROJECT@@";
-        private readonly TextBox m_log;
-        private Process m_running;
-
-        public AiPane()
-        {
-            m_log = new TextBox();
-            m_log.IsReadOnly = true;
-            m_log.AcceptsReturn = true;
-            m_log.TextWrapping = TextWrapping.NoWrap;
-            m_log.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
-            m_log.FontFamily = new System.Windows.Media.FontFamily("Consolas");
-            m_log.FontSize = 12;
-
-            var panel = new WrapPanel();
-@@BUTTONS@@
-            var root = new DockPanel();
-            DockPanel.SetDock(panel, Dock.Top);
-            root.Children.Add(panel);
-            root.Children.Add(m_log);
-            this.Content = root;
-
-            Append("PowerMill AI: панель готова. Кнопки со значком «окно» спрашивают своё в отдельном окне.");
-            Append("Python: " + PYTHON);
-            Append("Проект: " + PROJECT);
-        }
-
-        private void AddButton(Panel panel, string title, string module, string arguments, string bat)
-        {
-            var button = new Button();
-            button.Content = (bat.Length > 0) ? (title + " — окно") : title;
-            button.Margin = new Thickness(2);
-            button.Padding = new Thickness(8, 4, 8, 4);
-            button.ToolTip = (bat.Length > 0) ? (bat + " (откроется своё окно)") : (module + " " + arguments);
-            button.Click += delegate { if (bat.Length > 0) { RunWindow(title, bat); } else { RunInline(title, module, arguments); } };
-            panel.Children.Add(button);
-        }
-
-        private void Append(string text)
-        {
-            Dispatcher.Invoke((Action)delegate
+            string path = MacroPath(macroFile);
+            if (path == null)
             {
-                m_log.AppendText(text + "\\r\\n");
-                m_log.ScrollToEnd();
-            });
-        }
-
-        private void RunInline(string title, string module, string arguments)
-        {
-            if (string.IsNullOrEmpty(PYTHON))
-            {
-                Append("(!) Python проекта не найден — запусти пункт 27 установки пакетов.");
+                Append("(!) макроса " + macroFile + " нет. Запусти пункт 28 — "
+                       + "он ставит макросы PowerMill AI.");
                 return;
             }
-            Start(title, PYTHON, ("-m " + module + " " + arguments).Trim(), false);
-        }
-
-        private void RunWindow(string title, string bat)
-        {
-            string path = Path.Combine(PROJECT, bat);
-            if (!File.Exists(path))
+            object app = PowerMillApp();
+            if (app == null)
             {
-                Append("(!) нет файла " + path + " — проверь, что репозиторий на месте.");
+                Append("Макрос не выполнен. Кнопка на ленте «PowerMill AI» "
+                       + "(пункт 34) делает это же через сам PowerMill.");
                 return;
             }
-            Start(title, path, "", true);
+            string command = "MACRO \\"" + path.Replace("\\\\", "/") + "\\"";
+            Append("Отправляю PowerMill: " + command);
+            string[] methods = { "DoCommand", "ExecuteEx", "Execute" };
+            foreach (string name in methods)
+            {
+                try
+                {
+                    object result = app.GetType().InvokeMember(
+                        name,
+                        System.Reflection.BindingFlags.InvokeMethod
+                            | System.Reflection.BindingFlags.Public
+                            | System.Reflection.BindingFlags.Instance,
+                        null, app, new object[] { command });
+                    Append("PowerMill принял через " + name + ": "
+                           + (result == null ? "ок" : result.ToString()));
+                    return;
+                }
+                catch (Exception error)
+                {
+                    Append("· способ " + name + " не подошёл: " + error.Message);
+                }
+            }
+            Append("(!) ни один способ вызова не сработал — пришли этот журнал, "
+                   + "добавлю рабочий вызов.");
         }
 
-        private void Start(string title, string file, string arguments, bool inWindow)
+        private static string MacroPath(string macroFile)
         {
-            if (m_running != null && !m_running.HasExited)
+            string[] folders = { @@MACROFOLDERS@@ };
+            foreach (string folder in folders)
             {
-                Append("Сейчас уже идёт другой сценарий — дождись его конца.");
-                return;
+                string candidate = Path.Combine(PROJECT, folder.Replace("/", "\\\\"),
+                                                macroFile);
+                if (File.Exists(candidate)) { return candidate; }
             }
-            Append("");
-            Append("=== " + title + " ===");
+            return null;
+        }
+
+        // ---- объект PowerMILL: сначала через PluginServices, потом COM ----
+        private object PowerMillApp()
+        {
+            string[] members = { "PowerMILL", "PowerMill", "Application", "Automation" };
+            if (Services != null)
+            {
+                foreach (string name in members)
+                {
+                    try
+                    {
+                        object value = Services.GetType().InvokeMember(
+                            name,
+                            System.Reflection.BindingFlags.GetProperty
+                                | System.Reflection.BindingFlags.Public
+                                | System.Reflection.BindingFlags.Instance,
+                            null, Services, null);
+                        if (value != null)
+                        {
+                            Append("Связь с PowerMill: services." + name);
+                            return value;
+                        }
+                    }
+                    catch (Exception) { }
+                }
+            }
             try
             {
-                var info = new ProcessStartInfo(file, arguments);
-                info.WorkingDirectory = PROJECT;
-                info.UseShellExecute = inWindow;
-                if (!inWindow)
-                {
-                    info.RedirectStandardOutput = true;
-                    info.RedirectStandardError = true;
-                    info.CreateNoWindow = true;
-                    info.StandardOutputEncoding = Encoding.UTF8;
-                    info.StandardErrorEncoding = Encoding.UTF8;
-                    info.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8";
-                    info.EnvironmentVariables["APP_MODE"] = "eco";
-                }
-                m_running = new Process();
-                m_running.StartInfo = info;
-                if (!inWindow)
-                {
-                    m_running.EnableRaisingEvents = true;
-                    m_running.OutputDataReceived += delegate(object sender, DataReceivedEventArgs e)
-                    {
-                        if (e.Data != null) { Append(e.Data); }
-                    };
-                    m_running.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs e)
-                    {
-                        if (e.Data != null) { Append("(!) " + e.Data); }
-                    };
-                    m_running.Exited += delegate { Append("=== " + title + ": закончилось ==="); };
-                }
-                else
-                {
-                    Append("Открыл отдельное окно — отвечай на вопросы там.");
-                }
-                m_running.Start();
-                if (!inWindow)
-                {
-                    m_running.BeginOutputReadLine();
-                    m_running.BeginErrorReadLine();
-                }
+                object app = Marshal.GetActiveObject("PowerMill.Application");
+                Append("Связь с PowerMill: GetActiveObject");
+                return app;
             }
             catch (Exception error)
             {
-                Append("(!) не удалось запустить: " + error.Message);
+                Append("(!) PowerMill через COM не найден: " + error.Message);
             }
-        }
-    }
-}
-"""
-
-WINFORMS_UI = """    // Панель: кнопки сценариев + журнал вывода (WinForms)
-    public class AiPane : System.Windows.Forms.UserControl
-    {
-        private const string PYTHON = "@@PYTHON@@";
-        private const string PROJECT = "@@PROJECT@@";
-        private readonly System.Windows.Forms.TextBox m_log;
-        private Process m_running;
-
-        public AiPane()
-        {
-            m_log = new System.Windows.Forms.TextBox();
-            m_log.Multiline = true;
-            m_log.ReadOnly = true;
-            m_log.ScrollBars = System.Windows.Forms.ScrollBars.Both;
-            m_log.WordWrap = false;
-            m_log.Dock = System.Windows.Forms.DockStyle.Fill;
-            m_log.Font = new System.Drawing.Font("Consolas", 9f);
-
-            var panel = new System.Windows.Forms.FlowLayoutPanel();
-            panel.Dock = System.Windows.Forms.DockStyle.Top;
-            panel.AutoSize = true;
-            panel.WrapContents = true;
-@@BUTTONS@@
-            this.Controls.Add(m_log);
-            this.Controls.Add(panel);
-
-            Append("PowerMill AI: панель готова.");
-            Append("Python: " + PYTHON);
-            Append("Проект: " + PROJECT);
+            return null;
         }
 
-        private void AddButton(System.Windows.Forms.FlowLayoutPanel panel, string title,
-                               string module, string arguments, string bat)
-        {
-            var button = new System.Windows.Forms.Button();
-            button.Text = (bat.Length > 0) ? (title + " — окно") : title;
-            button.AutoSize = true;
-            button.Margin = new System.Windows.Forms.Padding(2);
-            button.Click += delegate { if (bat.Length > 0) { RunWindow(title, bat); } else { RunInline(title, module, arguments); } };
-            panel.Controls.Add(button);
-        }
-
-        private void Append(string text)
-        {
-            if (this.InvokeRequired)
-            {
-                this.Invoke((Action)delegate { Append(text); });
-                return;
-            }
-            m_log.AppendText(text + "\\r\\n");
-        }
-
+        // ---- запуск сценариев ----
         private void RunInline(string title, string module, string arguments)
         {
             if (string.IsNullOrEmpty(PYTHON))
@@ -420,7 +315,7 @@ WINFORMS_UI = """    // Панель: кнопки сценариев + журн
 
         private void RunWindow(string title, string bat)
         {
-            string path = Path.Combine(PROJECT, bat);
+            string path = Path.Combine(PROJECT, bat.Replace("/", "\\\\"));
             if (!File.Exists(path))
             {
                 Append("(!) нет файла " + path);
@@ -484,25 +379,76 @@ WINFORMS_UI = """    // Панель: кнопки сценариев + журн
                 Append("(!) не удалось запустить: " + error.Message);
             }
         }
-    }
-}
-"""
+'''
 
-WINFORMS_HEADER_TAIL = """using System;
+WPF_BUTTON = '''        private void AddButton(Panel panel, string title, string hint, string kind,
+                               string target, string arguments, string bat)
+        {
+            var button = new Button();
+            button.Content = (kind == "macro") ? ("▶ " + title + " (в PowerMill)")
+                                              : (kind == "bat" ? (title + " — окно") : title);
+            button.Margin = new Thickness(2);
+            button.Padding = new Thickness(8, 4, 8, 4);
+            button.ToolTip = hint;
+            button.Click += delegate
+            {
+                if (kind == "macro") { RunMacro(title, target); }
+                else if (kind == "bat") { RunWindow(title, bat.Length > 0 ? bat : target); }
+                else { RunInline(title, target, arguments); }
+            };
+            panel.Children.Add(button);
+        }
+'''
+
+WINFORMS_BUTTON = '''        private void AddButton(System.Windows.Forms.FlowLayoutPanel panel, string title,
+                               string hint, string kind, string target, string arguments,
+                               string bat)
+        {
+            var button = new System.Windows.Forms.Button();
+            button.Text = (kind == "macro") ? ("▶ " + title + " (в PowerMill)")
+                                           : (kind == "bat" ? (title + " — окно") : title);
+            button.AutoSize = true;
+            button.Margin = new System.Windows.Forms.Padding(2);
+            var tip = new System.Windows.Forms.ToolTip();
+            tip.SetToolTip(button, hint);
+            button.Click += delegate
+            {
+                if (kind == "macro") { RunMacro(title, target); }
+                else if (kind == "bat") { RunWindow(title, bat.Length > 0 ? bat : target); }
+                else { RunInline(title, target, arguments); }
+            };
+            panel.Controls.Add(button);
+        }
+'''
+
+HEADER = '''// ============================================================
+//  PowerMill AI — панель-плагин внутри PowerMill (пункт 38, шаг 2.3б)
+//  Файл СОБРАН скриптом scripts\\build_plugin.bat — правки затрутся.
+//  Собрано: @@WHEN@@
+//
+//  Кнопки берутся из общего списка (src\\pm_buttons.py) — того же, из которого
+//  собираются кнопки ленты (пункт 34). Макросы выполняются ВНУТРИ PowerMill,
+//  сценарии с вопросами открываются отдельным окном, остальное — в журнал.
+// ============================================================
+using System;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+@@UIUSINGS@@
 using Delcam.Plugins.Framework;
 
 namespace @@NAMESPACE@@
 {
+    // Атрибуты COM: после `regasm PowerMillAI.dll /register /codebase` PowerMill
+    // находит плагин по этому GUID.
     [Guid("@@GUID@@")]
     [ClassInterface(ClassInterfaceType.None)]
     [ComVisible(true)]
     public class @@CLASS@@ : PluginFrameworkWithPanes
     {
         private AiPane m_pane;
+        internal static PluginServices s_services;
 
         public override string PluginName { get { return "@@NAME@@"; } }
         public override string PluginAuthor { get { return "PowerMill AI"; } }
@@ -522,26 +468,170 @@ namespace @@NAMESPACE@@
             m_pane = new AiPane();
             register_pane(new PaneDefinition(m_pane, 900, 375, "@@NAME@@", null));
         }
-    }
 
-"""
+        // PowerMill отдаёт здесь свои службы — через них панель выполняет макросы
+        public override void setup_framework(string token, PluginServices services,
+                                            int parent_window_hwnd)
+        {
+            base.setup_framework(token, services, parent_window_hwnd);
+            s_services = services;
+            if (m_pane != null) { m_pane.Services = services; }
+        }
+    }
+'''
+
+WPF_PANE = '''
+    // Панель: группы кнопок + журнал
+    public class AiPane : @@BASECONTROL@@
+    {
+        private const string PYTHON = "@@PYTHON@@";
+        private const string PROJECT = "@@PROJECT@@";
+        private readonly TextBox m_log;
+        private Process m_running;
+
+        public PluginServices Services { get; set; }
+
+        public AiPane()
+        {
+            m_log = new TextBox();
+            m_log.IsReadOnly = true;
+            m_log.AcceptsReturn = true;
+            m_log.TextWrapping = TextWrapping.NoWrap;
+            m_log.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+            m_log.FontFamily = new System.Windows.Media.FontFamily("Consolas");
+            m_log.FontSize = 12;
+
+            var panel = new WrapPanel();
+@@BUTTONS@@
+            var root = new DockPanel();
+            DockPanel.SetDock(panel, Dock.Top);
+            root.Children.Add(panel);
+            root.Children.Add(m_log);
+            this.Content = root;
+
+            Append("PowerMill AI: панель готова.");
+            Append("Кнопки «▶ … (в PowerMill)» выполняются прямо в PowerMill.");
+            Append("Кнопки «— окно» спрашивают своё в отдельном окне.");
+            Append("Python: " + PYTHON);
+            Append("Проект: " + PROJECT);
+        }
+
+@@ADDBUTTON@@
+@@RUNNER@@
+        private void Append(string text)
+        {
+            Dispatcher.Invoke((Action)delegate
+            {
+                m_log.AppendText(text + "\\r\\n");
+                m_log.ScrollToEnd();
+            });
+        }
+    }
+}
+'''
+
+WINFORMS_PANE = '''
+    // Панель: группы кнопок + журнал (WinForms)
+    public class AiPane : System.Windows.Forms.UserControl
+    {
+        private const string PYTHON = "@@PYTHON@@";
+        private const string PROJECT = "@@PROJECT@@";
+        private readonly System.Windows.Forms.TextBox m_log;
+        private Process m_running;
+
+        public PluginServices Services { get; set; }
+
+        public AiPane()
+        {
+            m_log = new System.Windows.Forms.TextBox();
+            m_log.Multiline = true;
+            m_log.ReadOnly = true;
+            m_log.ScrollBars = System.Windows.Forms.ScrollBars.Both;
+            m_log.WordWrap = false;
+            m_log.Dock = System.Windows.Forms.DockStyle.Fill;
+            m_log.Font = new System.Drawing.Font("Consolas", 9f);
+
+            var panel = new System.Windows.Forms.FlowLayoutPanel();
+            panel.Dock = System.Windows.Forms.DockStyle.Top;
+            panel.AutoSize = true;
+            panel.WrapContents = true;
+@@BUTTONS@@
+            this.Controls.Add(m_log);
+            this.Controls.Add(panel);
+
+            Append("PowerMill AI: панель готова.");
+            Append("Кнопки «▶ … (в PowerMill)» выполняются прямо в PowerMill.");
+            Append("Python: " + PYTHON);
+            Append("Проект: " + PROJECT);
+        }
+
+@@ADDBUTTON@@
+@@RUNNER@@
+        private void Append(string text)
+        {
+            if (this.InvokeRequired)
+            {
+                this.Invoke((Action)delegate { Append(text); });
+                return;
+            }
+            m_log.AppendText(text + "\\r\\n");
+        }
+    }
+}
+'''
+
+WPF_USINGS = "using System.Windows;\nusing System.Windows.Controls;"
+WINFORMS_USINGS = ("using System.Windows.Forms;\n"
+                   "using System.Drawing;")
+
+
+def _group_constructors(spec: PluginSpec, ui: str) -> list[str]:
+    """Код панели: заголовок группы и её кнопки (отличается только UI-контролами)."""
+    lines: list[str] = []
+    for index, (group, buttons) in enumerate(spec.groups(), 1):
+        header = cs_str(group)
+        if ui == "winforms":
+            lines += [
+                f'            var head{index} = new System.Windows.Forms.Label();',
+                f'            head{index}.Text = "{header}";',
+                f'            head{index}.AutoSize = true;',
+                f'            head{index}.Font = new System.Drawing.Font('
+                f'"Segoe UI", 9f, System.Drawing.FontStyle.Bold);',
+                f'            panel.Controls.Add(head{index});',
+            ]
+        else:
+            lines += [
+                f'            var head{index} = new TextBlock();',
+                f'            head{index}.Text = "{header}";',
+                f'            head{index}.FontWeight = System.Windows.FontWeights.Bold;',
+                f'            head{index}.Margin = new Thickness(6, 6, 4, 0);',
+                f'            panel.Children.Add(head{index});',
+            ]
+        for button in buttons:
+            lines.append(
+                f'            AddButton(panel, "{cs_str(button.label)}", '
+                f'"{cs_str(button.hint)}", "{cs_str(button.kind)}", '
+                f'"{cs_str(button.target)}", "{cs_str(button.arguments)}", '
+                f'"{cs_str(button.bat)}");')
+    return lines
 
 
 def build_source(spec: PluginSpec, when: str | None = None) -> str:
     """Собирает исходник плагина (ComVisible-класс + панель с кнопками)."""
     stamp = when or time.strftime("%d.%m.%Y %H:%M")
-    buttons = _button_calls(spec, indent=" " * 12)
-    if spec.ui == "winforms":
-        template = (
-            WPF_HEADER.split("using System;", 1)[0]
-            + WINFORMS_HEADER_TAIL.replace("@@BUTTONS@@", "\n".join(buttons))
-            + WINFORMS_UI.replace("@@BUTTONS@@", "\n".join(buttons))
-        )
-    else:
-        template = WPF_HEADER.replace("@@BUTTONS@@", "\n".join(buttons))
+    ui = "winforms" if spec.ui == "winforms" else "wpf"
+    runner = RUNNER.replace(
+        "@@MACROFOLDERS@@",
+        ", ".join(f'"{cs_str(folder)}"' for folder in MACRO_FOLDERS))
 
-    python = spec.python_exe or ""
+    template = (HEADER + (WINFORMS_PANE if ui == "winforms" else WPF_PANE))
     text = (template
+            .replace("@@UIUSINGS@@", WINFORMS_USINGS if ui == "winforms" else WPF_USINGS)
+            .replace("@@BASECONTROL@@", "System.Windows.Forms.UserControl"
+                     if ui == "winforms" else "UserControl")
+            .replace("@@ADDBUTTON@@", WINFORMS_BUTTON if ui == "winforms" else WPF_BUTTON)
+            .replace("@@RUNNER@@", runner)
+            .replace("@@BUTTONS@@", "\n".join(_group_constructors(spec, ui)))
             .replace("@@WHEN@@", stamp)
             .replace("@@NAMESPACE@@", NAMESPACE)
             .replace("@@CLASS@@", CLASS_NAME)
@@ -549,7 +639,7 @@ def build_source(spec: PluginSpec, when: str | None = None) -> str:
             .replace("@@NAME@@", cs_str(spec.plugin_name))
             .replace("@@GUID@@", spec.guid)
             .replace("@@PMVERSION@@", _version_literal(spec.pm_version))
-            .replace("@@PYTHON@@", cs_str(str(python).replace("/", "\\")))
+            .replace("@@PYTHON@@", cs_str(str(spec.python_exe or "").replace("/", "\\")))
             .replace("@@PROJECT@@", cs_str(str(spec.project_dir).replace("/", "\\"))))
     return text
 
@@ -583,8 +673,7 @@ def find_references(extra_dirs: list[Path] | None = None,
         if not root.exists():
             continue
         try:
-            walker = root.rglob("*.dll")
-            for path in walker:
+            for path in root.rglob("*.dll"):
                 name = path.name
                 if name in seen:
                     continue
@@ -667,11 +756,18 @@ def plan_lines(spec: PluginSpec, tools: dict[str, str | None],
         f"  1. Исходник: {source_path(spec.output_dir)}",
         f"     класс {NAMESPACE}.{CLASS_NAME} (COM, GUID {spec.guid})",
         f"     UI: {'WPF (как в примерах Autodesk)' if spec.ui != 'winforms' else 'WinForms'}",
-        f"     кнопок на панели: {len(spec.buttons)}",
+        f"     кнопок на панели: {len(spec.buttons)} — из того же списка, что лента",
     ]
-    for button in spec.buttons:
-        where = button.bat if button.bat else f"в панель: {button.module}"
-        lines.append(f"        • {button.label} — {where}")
+    for group, buttons in spec.groups():
+        lines.append(f"     {group}:")
+        for button in buttons:
+            if button.kind == "macro":
+                where = f"выполнить макрос {button.target} внутри PowerMill"
+            elif button.kind == "bat":
+                where = f"открыть окно: {button.target}"
+            else:
+                where = f"в журнал панели: {button.target} {button.arguments}".strip()
+            lines.append(f"        • {button.label} — {where}")
     lines.append(f"  2. Каркас для ссылок: {len(references.get('framework', []))} сборок"
                  + (f" ({Path(references['framework'][0]).name} …)"
                     if references.get("framework") else " — НЕ НАЙДЕН"))
@@ -685,8 +781,6 @@ def plan_lines(spec: PluginSpec, tools: dict[str, str | None],
 
 def parse_build_output(text: str) -> tuple[list[str], list[str]]:
     """Ошибки и предупреждения компилятора из его вывода."""
-    import re
-
     errors: list[str] = []
     warnings: list[str] = []
     for line in (text or "").splitlines():

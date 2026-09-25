@@ -25,7 +25,22 @@ from src.applog import start_log                # noqa: E402
 REPORT_FILE = None                              # ставится в main()
 
 
+# Что копируем в папку макросов PowerMill: наши макросы ассистента плюс
+# макросы-запускатели кнопок (их пишет пункт 34 — по одному на кнопку ленты
+# и панели плагина, из общего списка src\pm_buttons.py).
 MACRO_NAMES = ("PM_AI_TEST.mac", "PM_AI_ASK.mac", "PM_AI_SNAPSHOT.mac")
+
+
+def macro_names() -> list[str]:
+    """Наши макросы из папки: PM_AI_*.mac (имена кнопок тоже нужны PowerMill)."""
+    names = list(MACRO_NAMES)
+    try:
+        for path in sorted(pm_macro.MACRO_DIR.glob("PM_AI_*.mac")):
+            if path.name not in names:
+                names.append(path.name)
+    except OSError:
+        pass
+    return names
 
 
 def main() -> int:
@@ -54,7 +69,7 @@ def main() -> int:
     if folders:
         printer.print("Копирую в папки макросов PowerMill:")
         for folder in folders:
-            for name in MACRO_NAMES:
+            for name in macro_names():
                 source = pm_macro.MACRO_DIR / name
                 if not source.exists():
                     continue
