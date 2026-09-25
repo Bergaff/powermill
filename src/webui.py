@@ -64,6 +64,7 @@ REPORT_TITLES = {
     "pm_nc_report.txt": "NC-программа (пункт 36)",
     "pm_nc_result.txt": "NC: отчёт макроса",
     "pm_flow_report.txt": "«Делай»: поток целиком (шаг 3.6)",
+    "pm_plugin_build_report.txt": "Сборка плагина (пункт 38)",
     "pm_tool_word.txt": "Слово создания фрезы",
     "pm_project.txt": "Снимок проекта от макроса",
     "pm_trace_1.txt": "Самопроверка моста: шаг 1 — файл записан",

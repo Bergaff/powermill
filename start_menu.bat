@@ -61,12 +61,14 @@ echo     36  -  Вывести NC-программу из траекторий  
 echo.
 echo     37  -  СДЕЛАЙ: план -> выполнение -> проверки -> NC (шаг 3.6)
 echo.
+echo     38  -  Плагин-панель «PowerMill AI» внутри PowerMill  (шаг 2.3б)
+echo.
 echo      0  -  Выход
 echo.
 echo   Внутри любых экранов слово  «назад»  или  «меню»
 echo   возвращает к этому списку.
 echo.
-set /p choice="   Выбор (0-37): "
+set /p choice="   Выбор (0-38): "
 
 if "%choice%"=="1"  goto chat
 if "%choice%"=="2"  goto search
@@ -105,6 +107,7 @@ if "%choice%"=="34" goto ribbon
 if "%choice%"=="35" goto checks
 if "%choice%"=="36" goto nc
 if "%choice%"=="37" goto flow
+if "%choice%"=="38" goto plugin2
 if "%choice%"=="0"  exit /b 0
 if /i "%choice%"=="назад" exit /b 0
 if /i "%choice%"=="меню" goto menu
@@ -220,6 +223,10 @@ goto menu
 
 :flow
 call "%~dp0scripts\make_flow.bat"
+goto menu
+
+:plugin2
+call "%~dp0scripts\build_plugin.bat"
 goto menu
 
 :pmmacros
