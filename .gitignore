@@ -26,3 +26,13 @@ chroma_db/
 
 # Секреты
 .env
+api_key.json
+*api_key*.json
+config_local.py
+
+# Артефакты запусков: литеральные пути диска Windows не должны попадать в Git
+/E:/
+
+# Локальная установка (install.bat пишет эти файлы на конкретном компьютере)
+install.json
+install_report.txt

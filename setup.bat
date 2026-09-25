@@ -1,25 +1,21 @@
 @echo off
 chcp 65001 >nul
-title PowerMill AI Setup (heavy data on disk E)
+title PowerMill AI - установка (всё тяжёлое на диск E:)
+cd /d "%~dp0"
+
 echo =========================================================
-echo   PowerMill AI - Setup. Everything heavy goes to disk E.
-echo   Code:      E:\powermill-ai
-echo   Models:    E:\ollama_models
+echo   PowerMill AI - УСТАНОВКА
+echo   Код:       E:\powermill-ai
+echo   Модели:    E:\ollama_models
 echo   HF cache:  E:\hf_cache
 echo   Pip cache: E:\pip_cache
 echo =========================================================
-cd /d "%~dp0"
+echo.
 
 where python >nul 2>nul
-if errorlevel 1 (
-    echo [!] Python not found! Install from https://www.python.org/downloads/
-    echo     Check "Add Python to PATH" during installation.
-    pause
-    exit /b 1
-)
+if errorlevel 1 goto no_python
 
-echo.
-echo [1/5] Creating folders on disk E...
+echo [1/6] Создаю папки на диске E: ...
 set "POWERMILL_DATA_ROOT=E:\powermill-ai"
 set "OLLAMA_MODELS=E:\ollama_models"
 set "HF_HOME=E:\hf_cache"
@@ -33,7 +29,7 @@ if not exist "E:\powermill-ai\data\macros" mkdir "E:\powermill-ai\data\macros"
 if not exist "E:\powermill-ai\data\forums" mkdir "E:\powermill-ai\data\forums"
 
 echo.
-echo [2/5] Saving environment variables (setx)...
+echo [2/6] Сохраняю переменные окружения (setx)...
 setx POWERMILL_DATA_ROOT "E:\powermill-ai" >nul
 setx OLLAMA_MODELS "E:\ollama_models" >nul
 setx HF_HOME "E:\hf_cache" >nul
@@ -44,48 +40,86 @@ echo       HF_HOME             = E:\hf_cache
 echo       PIP_CACHE_DIR       = E:\pip_cache
 
 echo.
-echo [3/5] Creating virtual environment on E: ...
-if not exist "venv\Scripts\python.exe" (
-    python -m venv venv
-) else (
-    echo       venv already exists - skipping
-)
+echo [3/6] Создаю виртуальное окружение...
+if exist "venv\Scripts\python.exe" goto have_venv
+python -m venv venv
+goto venv_ready
+
+:have_venv
+echo       venv уже есть - пропускаю
+
+:venv_ready
 call venv\Scripts\activate
 
 echo.
-echo [4/5] Installing dependencies (torch ~2 GB, pip cache on E:)...
+echo [4/6] Устанавливаю зависимости (torch ~2 ГБ, может занять 10-20 минут)...
 python -m pip install --upgrade pip
 pip install -r requirements.txt
+if errorlevel 1 goto pip_partial
 
 echo.
-echo [5/5] Checking Ollama...
+echo [5/6] Проверяю Ollama...
+goto ollama
+
+:pip_partial
+echo.
+echo [!] Часть библиотек не установилась.
+echo     Если это pytorch - запусти отдельно: scripts\install_torch.bat
+echo     Затем подготовь отчёт: scripts\make_report.bat
+echo.
+
+:ollama
+echo.
+echo [5/6] Проверяю Ollama...
 set "OLLAMA_CMD="
 where ollama >nul 2>nul
 if not errorlevel 1 set "OLLAMA_CMD=ollama"
-if not defined OLLAMA_CMD if exist "%LOCALAPPDATA%\Programs\Ollama\ollama.exe" set "OLLAMA_CMD=%LOCALAPPDATA%\Programs\Ollama\ollama.exe"
+if defined OLLAMA_CMD goto ollama_found
+if exist "%LOCALAPPDATA%\Programs\Ollama\ollama.exe" set "OLLAMA_CMD=%LOCALAPPDATA%\Programs\Ollama\ollama.exe"
+if defined OLLAMA_CMD goto ollama_found
 set "PF86=%ProgramFiles(x86)%"
-if not defined OLLAMA_CMD if exist "%ProgramFiles%\Ollama\ollama.exe" set "OLLAMA_CMD=%ProgramFiles%\Ollama\ollama.exe"
-if not defined OLLAMA_CMD if exist "%PF86%\Ollama\ollama.exe" set "OLLAMA_CMD=%PF86%\Ollama\ollama.exe"
+if exist "%ProgramFiles%\Ollama\ollama.exe" set "OLLAMA_CMD=%ProgramFiles%\Ollama\ollama.exe"
+if defined OLLAMA_CMD goto ollama_found
+if exist "%PF86%\Ollama\ollama.exe" set "OLLAMA_CMD=%PF86%\Ollama\ollama.exe"
 
-if not defined OLLAMA_CMD (
-    echo [!] Ollama not found in PATH or default folders.
-    echo     Download: https://ollama.com/download/windows
-    echo     If already installed - open a NEW cmd window and
-    echo     run setup.bat again.
-) else (
-    echo       Ollama found: %OLLAMA_CMD%
-    echo       Next step: restart Ollama from tray, then run
-    echo       start_download_models.bat
-)
+if not defined OLLAMA_CMD goto ollama_missing
+goto ollama_found
+
+:ollama_missing
+echo       [!] Ollama не найдена. Скачай: https://ollama.com/download/windows
+echo           Если уже установлена - открой НОВОЕ окно и запусти setup.bat снова.
+goto step6
+
+:ollama_found
+echo       Ollama найдена: %OLLAMA_CMD%
+
+:step6
+echo.
+echo [6/6] Состояние базы знаний...
+python -m scripts.base_status
 
 echo.
 echo =========================================================
-echo   SETUP FINISHED
-echo   1. Put PDF files into E:\powermill-ai\data\pdf
-echo   2. Optional: videos into E:\powermill-ai\data\videos
-echo   3. Optional: *.mac macros into E:\powermill-ai\data\macros
-echo   4. Download models: start_download_models.bat
-echo   5. Night indexing:  start_night_indexing.bat
-echo   6. Chat:            start_work_chat.bat
+echo   УСТАНОВКА ЗАВЕРШЕНА
+echo.
+echo   Дальше - всё через меню:   start_menu.bat
+echo.
+echo   Порядок действий:
+echo     1. Скачать модели Ollama:   пункт 14 меню
+echo     2. Подключить ИИ по API:    пункт 21 меню (умнее, если есть ключ)
+echo     3. Проверить справку:       пункт 9 меню
+echo     4. Разобрать справку:       пункт 4 меню
+echo     5. Собрать векторную базу:  пункт 6 меню
+echo     6. Общаться:                пункт 1 меню
 echo =========================================================
+echo.
 pause
+exit /b 0
+
+:no_python
+echo [!] Python не найден!
+echo     Установи с https://www.python.org/downloads/
+echo     При установке отметь галочку "Add Python to PATH".
+echo.
+pause
+exit /b 1

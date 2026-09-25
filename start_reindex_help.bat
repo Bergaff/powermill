@@ -1,37 +1,58 @@
 @echo off
 chcp 65001 >nul
-title PowerMill AI - Reindex offline Help
+title PowerMill AI - векторная база
+set APP_MODE=turbo
+setlocal
 cd /d "%~dp0"
+
+echo =========================================================
+echo   СБОРКА ВЕКТОРНОЙ БАЗЫ ChromaDB на диске E:
+echo   Долго: эмбеддинги на CPU, 10-60 минут.
+echo   Лучше на ночь: start_night_indexing.bat
+echo =========================================================
+echo.
+
+if not exist "venv\Scripts\python.exe" goto no_venv
 call venv\Scripts\activate
 
-echo =========================================================
-echo   Parse offline HTML Help + PML reference
-echo   and rebuild ChromaDB on disk E.
-echo =========================================================
-echo.
-
-echo [1/2] Parsing HTML help...
-python -m src.html_parser
-if errorlevel 1 (
-    echo [!] html_parser failed
-    pause
-    exit /b 1
-)
+python -m scripts.preflight reindex
+if errorlevel 1 goto failed
 
 echo.
-echo [2/2] Rebuilding vector store...
+echo Начинаю. Не выключай компьютер. Прервать - Ctrl+C.
+echo.
 python -m src.vectorstore
-if errorlevel 1 (
-    echo [!] vectorstore failed
-    pause
-    exit /b 1
-)
+if errorlevel 1 goto build_failed
 
 echo.
+python -m scripts.base_status
+echo.
 echo =========================================================
-echo   DONE. Start chat:  start_work_chat.bat
-echo   Test inside chat:
-echo     /sources tool selection
-echo     /sources Offset Area Clearance
+echo   ГОТОВО. Общаться с ассистентом: пункт 1 меню
 echo =========================================================
+echo.
 pause
+exit /b 0
+
+:no_venv
+echo [!] Нет venv - запусти setup.bat
+echo     Быстрый старт без ИИ: setup_light.bat
+echo.
+pause
+exit /b 1
+
+:failed
+echo.
+echo [!] Не всё готово для сборки - смотри сообщения выше.
+echo.
+pause
+exit /b 1
+
+:build_failed
+echo.
+echo [!] Сборка не удалась.
+echo     Если ошибка про torch - запусти scripts\install_torch.bat
+echo     Лог: output\logs\vectorstore.log
+echo.
+pause
+exit /b 1

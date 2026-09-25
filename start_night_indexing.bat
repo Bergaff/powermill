@@ -1,35 +1,48 @@
 @echo off
 chcp 65001 >nul
-title PowerMill AI [TURBO - night indexing]
+title PowerMill AI [TURBO - ночная индексация]
 set APP_MODE=turbo
-echo =======================================================
-echo   PowerMill AI - TURBO MODE (run at night)
-echo   * Maximum CPU power
-echo   * Builds knowledge base on disk E
-echo =======================================================
+setlocal
 cd /d "%~dp0"
+
+echo =========================================================
+echo   НОЧНАЯ ПОЛНАЯ ИНДЕКСАЦИЯ (режим TURBO)
+echo   PDF, справка HTML, видео, векторная база
+echo =========================================================
+echo.
+
+if not exist "venv\Scripts\python.exe" goto no_venv
 call venv\Scripts\activate
 
-echo [1/4] Parsing PDF files from E:\powermill-ai\data\pdf ...
+echo [1/4] PDF-документация из data\pdf ...
 python -m src.pdf_parser
-if errorlevel 1 echo    (skipped or error - continuing)
-
 echo.
-echo [2/4] Parsing offline HTML Help + PML reference...
+
+echo [2/4] Оффлайн-справка PowerMill ...
 python -m src.html_parser
-if errorlevel 1 echo    (no help folder or error - continuing)
-
+python -m src.help_search --rebuild
 echo.
-echo [3/4] Transcribing videos from E:\powermill-ai\data\videos (if any)...
+
+echo [3/4] Видеоуроки из data\videos ...
 python -m src.video_parser
-if errorlevel 1 echo    (no videos or error - continuing)
-
 echo.
-echo [4/4] Building ChromaDB vector store on E:\powermill-ai\chroma_db ...
+
+echo [4/4] Векторная база ChromaDB ...
 python -m src.vectorstore
-
 echo.
-echo =======================================================
-echo   DONE! Now you can run start_work_chat.bat
-echo =======================================================
+
+python -m scripts.base_status
+echo.
+echo =========================================================
+echo   НОЧНАЯ ИНДЕКСАЦИЯ ЗАВЕРШЕНА
+echo   Логи: output\logs\
+echo =========================================================
+echo.
 pause
+exit /b 0
+
+:no_venv
+echo [!] Нет venv - запусти setup.bat
+echo.
+pause
+exit /b 1
