@@ -38,19 +38,18 @@ from config import (CHROMA_DIR, DATA_ROOT, HELP_DIR, OUTPUT_DIR,
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 REPORT_FILE = OUTPUT_DIR / "doctor_report.txt"
 
-# Ключевые библиотеки: без них ассистент не работает (остальное — по желанию)
-REQUIRED_MODULES = {
-    "requests": "обмен с ИИ по API",
-    "bs4": "разбор страниц справки",
-    "lxml": "ускоренный разбор справки",
-}
-OPTIONAL_MODULES = {
-    "psutil": "поиск запущенных процессов PowerMill (пункт 23)",
-    "win32com": "мост к PowerMill через COM (пункты 24, 31, 33)",
-    "chromadb": "векторный поиск по справке (пункт 6)",
-    "sentence_transformers": "смысловой поиск (пункт 6)",
-    "faster_whisper": "разбор видео (по желанию)",
-}
+# Списки библиотек живут в ОДНОМ месте — src\deps.py. Иначе окно говорит
+# «поставь», а проверка компьютера «всё есть». Здесь только названия наборов.
+def _required_modules() -> dict[str, str]:
+    from src import deps
+
+    return {spec.package: spec.purpose for spec in deps.BASE_PACKAGES}
+
+
+def _optional_modules() -> dict[str, str]:
+    from src import deps
+
+    return {spec.package: spec.purpose for spec in deps.OPTIONAL_PACKAGES}
 
 STATUS_OK = "ok"
 STATUS_BAD = "bad"
@@ -127,6 +126,10 @@ class DoctorReport:
         lines.append("  • ярлык «PowerMill AI» на рабочем столе — окно приложения;")
         lines.append("  • в PowerMill: вкладка «PowerMill AI» (пункт 34) или панель "
                      "плагина (пункт 38);")
+        lines.append("  • чего не хватает из библиотек: start_menu.bat -> 43 "
+                     "(или кнопка «Установить недостающее» в окне);")
+        lines.append("  • другую папку данных: start_menu.bat -> 42 "
+                     "(или кнопка «Папка данных: сменить…» в окне);")
         lines.append("  • все отчёты: start_menu.bat -> 29.")
         return "\n".join(lines)
 
@@ -161,20 +164,33 @@ def check_venv(project_dir: Path | str = PROJECT_ROOT) -> Check:
 
 
 def check_modules() -> list[Check]:
+    """Что стоит, чего нет. Проверяем МОДУЛИ (win32com, bs4), а не имена пакетов.
+
+    Без обязательного набора нет связи с PowerMill — поэтому это ошибка (✘), а
+    не «мелочь»: человек должен увидеть это до работы, а не в середине.
+    """
+    from src import deps
+
     checks: list[Check] = []
-    for name, purpose in REQUIRED_MODULES.items():
-        if importlib.util.find_spec(name) is not None:
-            checks.append(Check(f"Библиотека {name}", STATUS_OK, purpose))
+    for spec in deps.BASE_PACKAGES:
+        if deps.package_ok(spec):
+            checks.append(Check(f"Библиотека {spec.package}", STATUS_OK,
+                                spec.purpose))
         else:
-            checks.append(Check(f"Библиотека {name}", STATUS_BAD, f"нет ({purpose})",
-                                "Запусти install.bat — он поставит нужное."))
-    missing = [name for name in OPTIONAL_MODULES
-               if importlib.util.find_spec(name) is None]
-    if missing:
+            checks.append(Check(
+                f"Библиотека {spec.package}", STATUS_BAD, f"нет ({spec.purpose})",
+                "Поставить: окно приложения -> кнопка «Установить недостающее», "
+                "или пункт 43 меню, или install.bat (ставит вместе с "
+                "приложением)."))
+
+    heavy = deps.missing(base=False, optional=True)
+    if heavy:
         checks.append(Check("Библиотеки по желанию", STATUS_WARN,
-                            "нет: " + ", ".join(missing),
+                            "нет: " + ", ".join(spec.package for spec in heavy),
                             "Без них недоступны: " + "; ".join(
-                                OPTIONAL_MODULES[n] for n in missing)))
+                                f"{spec.package} — {spec.purpose}"
+                                for spec in heavy) +
+                            "\nСтавятся ночью: пункт 43 меню с ключом --all."))
     else:
         checks.append(Check("Библиотеки по желанию", STATUS_OK, "все на месте"))
     return checks
@@ -204,8 +220,9 @@ def check_data_root(data_root: Path | str = DATA_ROOT) -> Check:
         # Папку пришлось взять другую (например, диска E: нет) — говорим прямо
         # и подсказываем, как выбрать свою.
         return Check("Папка данных", STATUS_WARN, f"{root}{size_hint}",
-                     "\n".join(notes) + "\nВыбрать другую: кнопка «Папка данных…» "
-                     "в окне приложения или install.bat.")
+                     "\n".join(notes) + "\nВыбрать другую: окно приложения -> "
+                     "кнопка «Папка данных: сменить…», или пункт 42 меню, "
+                     "или install.bat.")
     return Check("Папка данных", STATUS_OK, f"{root}{size_hint}")
 
 
@@ -242,6 +259,12 @@ def check_help_dir() -> Check:
 
 
 def check_powermill_installed() -> Check:
+    """Найден ли PowerMill. Показываем сами программы, а не папки-соседей.
+
+    Раньше в отчёт попадали первые три папки с «powermill» в имени — у одного
+    человека там оказались только плагины 2023 года, и выглядело это так, будто
+    PowerMill не найден. Теперь сначала ищем `PowerMill.exe`.
+    """
     from src import power_mill_link
 
     found = power_mill_link.find_install_dirs()
@@ -249,8 +272,17 @@ def check_powermill_installed() -> Check:
         return Check("PowerMill установлен", STATUS_BAD, "не найден",
                      "Этот ассистент работает вместе с PowerMill. Установи "
                      "PowerMill и запусти проверку снова.")
-    return Check("PowerMill установлен", STATUS_OK,
-                 "; ".join(str(path) for path in found[:3]))
+    programs = power_mill_link.find_pm_executables(found)
+    if programs:
+        tail = "" if len(programs) <= 2 else f" (и ещё {len(programs) - 2})"
+        return Check("PowerMill установлен", STATUS_OK,
+                     "; ".join(programs[:2]) + tail)
+    return Check("PowerMill установлен", STATUS_WARN,
+                 "папки установки есть, но PowerMill.exe не найден: " +
+                 "; ".join(str(path) for path in found[:3]),
+                 "Если PowerMill работает — ничего не делай, он мог быть "
+                 "установлен в необычное место. Пригодится при поиске "
+                 "макросов и сборок API.")
 
 
 def check_powermill_running() -> Check:

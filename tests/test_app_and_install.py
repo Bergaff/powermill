@@ -365,7 +365,7 @@ def test_data_root_check_warns_after_move(tmp_path, monkeypatch):
     check = doctor.check_data_root(tmp_path)
     assert check.status == doctor.STATUS_WARN
     assert "Папка данных" in check.advice
-    assert "Папка данных…" in check.advice
+    assert "Папка данных: сменить…" in check.advice
 
 
 def test_installer_folder_check(tmp_path):
@@ -532,3 +532,287 @@ def test_window_has_link_and_setup_buttons():
     assert "Проверка компьютера" in labels
     groups = [name for name, _items in app_window.grouped_plans()]
     assert pm_buttons.GROUP_SETUP in groups
+
+
+# --------------------------------------------------------------------------
+# Библиотеки: чего не хватает и как это поставить (пункт 43, кнопка в окне)
+# --------------------------------------------------------------------------
+def test_required_list_includes_the_bridge():
+    """Без pywin32 и psutil связи с PowerMill нет — это обязательное, не «по желанию»."""
+    from src import deps
+
+    names = [spec.package for spec in deps.BASE_PACKAGES]
+    assert "pywin32" in names and "psutil" in names
+    # у pywin32 модуль называется иначе — проверяем именно модули
+    bridge = next(spec for spec in deps.BASE_PACKAGES if spec.package == "pywin32")
+    assert "win32com.client" in bridge.modules
+
+
+def test_doctor_and_deps_agree_on_the_same_list():
+    from src import deps
+
+    titles = [check.title for check in doctor.check_modules()]
+    for spec in deps.BASE_PACKAGES:
+        assert any(title.startswith(f"Библиотека {spec.package}") for title in titles)
+
+
+def test_deps_summary_points_to_the_button_and_menu():
+    from src import deps
+
+    text = "\n".join(deps.summary_lines())
+    assert "Установить недостающее" in text
+    assert "43" in text
+
+
+def test_deps_unknown_module_is_just_missing():
+    from src import deps
+
+    assert deps.module_available("такого_модуля_нет") is False
+    assert deps.package_ok(deps.PackageSpec("нет-пакета", ("такого_модуля_нет",),
+                                            "проверка")) is False
+
+
+def test_deps_install_command_uses_the_same_interpreter():
+    from src import deps
+
+    command = deps.pip_command(["psutil"], python="/tmp/питон")
+    assert command[0] == "/tmp/питон"
+    assert command[1:3] == ["-m", "pip"]
+    assert "psutil" in command
+
+
+def test_deps_install_streams_pip_output(monkeypatch):
+    """Окно показывает ход установки: каждая строка pip идёт в журнал."""
+    from src import deps
+
+    class FakePopen:
+        def __init__(self, command, **kwargs):
+            self.command = command
+            self.stdout = iter(["Looking in indexes\n", "Successfully installed psutil\n"])
+            self.returncode = 0
+
+        def wait(self):
+            return 0
+
+    monkeypatch.setattr(deps.subprocess, "Popen", FakePopen)
+    lines: list[str] = []
+    ok, message = deps.install(["psutil"], log=lines.append)
+    assert ok and "psutil" in message
+    assert any("Successfully installed" in line for line in lines)
+
+
+def test_deps_install_reports_pip_failure(monkeypatch):
+    from src import deps
+
+    class FakePopen:
+        def __init__(self, command, **kwargs):
+            self.stdout = iter(["ERROR: Could not find a version\n"])
+            self.returncode = 1
+
+        def wait(self):
+            return 1
+
+    monkeypatch.setattr(deps.subprocess, "Popen", FakePopen)
+    ok, message = deps.install(["psutil"])
+    assert ok is False
+    assert "кодом 1" in message
+
+
+def test_deps_report_is_written(tmp_path, monkeypatch):
+    from src import deps
+
+    monkeypatch.setattr(deps, "REPORT_FILE", tmp_path / "install_packages_report.txt")
+    path = deps.save_report(deps.report_lines())
+    text = path.read_text(encoding="utf-8")
+    assert "БИБЛИОТЕКИ" in text
+    assert "ИТОГ" in text
+
+
+def test_install_deps_check_never_installs(monkeypatch, tmp_path):
+    from scripts import install_deps
+
+    called: list[object] = []
+    monkeypatch.setattr(install_deps.deps, "install",
+                        lambda *a, **k: called.append(a) or (True, "нет"))
+    monkeypatch.setattr(install_deps.deps, "REPORT_FILE",
+                        tmp_path / "install_packages_report.txt")
+    code = install_deps.main(["--check"])
+    assert called == []                                  # ничего не ставили
+    assert code in (0, 1)
+
+
+def test_install_deps_installs_when_asked(monkeypatch, tmp_path):
+    from scripts import install_deps
+
+    spec = install_deps.deps.PackageSpec("pywin32", ("win32com.client",),
+                                         "связь с PowerMill")
+    monkeypatch.setattr(install_deps.deps, "missing", lambda base=True, optional=False: [spec])
+    monkeypatch.setattr(install_deps.deps, "REPORT_FILE",
+                        tmp_path / "install_packages_report.txt")
+    installed: list[str] = []
+
+    def fake_install(packages, python=None, log=None):
+        installed.extend(item.package if hasattr(item, "package") else item
+                         for item in packages)
+        if log:
+            log("ставим…")
+        return True, "установлено"
+
+    monkeypatch.setattr(install_deps.deps, "install", fake_install)
+    assert install_deps.main(["--yes"]) == 0
+    assert installed == ["pywin32"]
+
+
+# --------------------------------------------------------------------------
+# Смена папки данных (пункт 42 и кнопка в окне)
+# --------------------------------------------------------------------------
+def test_choose_folder_saves_the_choice(tmp_path, monkeypatch):
+    from scripts import choose_folder
+
+    settings = tmp_path / "install.json"
+    monkeypatch.setattr(choose_folder.config, "settings_path", lambda: settings)
+    monkeypatch.setattr(choose_folder, "REPORT_FILE",
+                        tmp_path / "output" / "data_root_report.txt")
+    target = tmp_path / "мои данные"
+    lines = choose_folder.save_choice(target)
+    assert not any(line.startswith("(!)") for line in lines)
+    import json
+
+    assert json.loads(settings.read_text(encoding="utf-8"))["data_root"] == str(target)
+    for sub in ("data/pdf", "chroma_db", "output"):
+        assert (target / sub).is_dir()
+
+
+def test_choose_folder_refuses_a_file_path(tmp_path):
+    from scripts import choose_folder
+
+    blocker = tmp_path / "не_папка"
+    blocker.write_text("это файл", encoding="utf-8")
+    problem = choose_folder.folder_problem(blocker / "внутри")
+    assert problem                                     # объясняет, что нельзя
+    lines = choose_folder.save_choice(blocker / "внутри")
+    assert any(line.startswith("(!)") for line in lines)
+
+
+def test_choose_folder_show_only_prints_current():
+    """`--show` показывает текущую папку и ничего не меняет.
+
+    Проверяем по логу (`output\\logs\\choose_folder.log`), а не по stdout:
+    скрипты печатают через src/applog._Tee в настоящий stdout — и это же
+    означает, что всё сказанное человеку остаётся в файле.
+    """
+    import config
+    from scripts import choose_folder
+
+    assert choose_folder.main(["--show"]) == 0
+    text = (Path(config.OUTPUT_DIR) / "logs" / "choose_folder.log").read_text(
+        encoding="utf-8", errors="replace")
+    assert "ПАПКА ДАННЫХ" in text
+    assert "Сейчас:" in text
+
+
+def test_window_offers_folder_and_library_buttons():
+    """Кнопки должны быть в окне: смена папки и установка недостающего."""
+    source = (Path(__file__).resolve().parent.parent
+              / "src" / "app_window.py").read_text(encoding="utf-8")
+    assert "Папка данных: сменить…" in source
+    assert "Установить недостающее" in source
+    assert "Перезапустить окно" in source
+    for method in ("def choose_folder", "def install_missing",
+                   "def _install_thread", "def restart_window"):
+        assert method in source
+
+
+def test_window_installer_uses_the_same_list_as_everyone():
+    source = (Path(__file__).resolve().parent.parent
+              / "src" / "app_window.py").read_text(encoding="utf-8")
+    assert "from src import deps" in source
+    assert "deps.install(" in source
+
+
+# --------------------------------------------------------------------------
+# install.bat ставит обязательные библиотеки вместе с приложением
+# --------------------------------------------------------------------------
+def test_installer_takes_the_required_list_from_one_place():
+    from scripts import install_app
+
+    names = install_app.base_package_names()
+    assert "pywin32" in names and "psutil" in names
+
+
+def test_installer_installs_required_first(monkeypatch, tmp_path):
+    from scripts import install_app
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr(install_app, "pip_install",
+                        lambda printer, python, targets: calls.append(targets) or True)
+    monkeypatch.setattr(install_app, "verify_base", lambda printer, python: [])
+    printer = install_app.Printer(None)
+    printer.print = lambda text="": None                  # без вывода в консоль
+    ok = install_app.install_requirements(printer, Path("/tmp/питон"), heavy=False)
+    assert ok is True
+    assert calls and "pywin32" in calls[0]                # база — первой
+    assert len(calls) == 1                                # тяжёлое не ставили
+
+
+def test_installer_can_ask_for_heavy_packages(monkeypatch, tmp_path):
+    from scripts import install_app
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr(install_app, "pip_install",
+                        lambda printer, python, targets: calls.append(targets) or True)
+    monkeypatch.setattr(install_app, "verify_base", lambda printer, python: [])
+    printer = install_app.Printer(None)
+    printer.print = lambda text="": None
+    install_app.install_requirements(printer, Path("/tmp/питон"), heavy=True)
+    assert len(calls) == 2                                # база и requirements.txt
+    assert calls[1][0] == "-r"
+
+
+def test_installer_tells_how_to_finish_if_pip_failed(monkeypatch):
+    from scripts import install_app
+
+    lines: list[str] = []
+    monkeypatch.setattr(install_app, "pip_install",
+                        lambda printer, python, targets: False)
+    monkeypatch.setattr(install_app, "verify_base", lambda printer, python: ["pywin32"])
+    printer = install_app.Printer(None)
+    printer.print = lines.append
+    ok = install_app.install_requirements(printer, Path("/tmp/питон"), heavy=False)
+    text = "\n".join(lines)
+    assert ok is False
+    assert "Установить недостающее" in text and "43" in text
+
+
+# --------------------------------------------------------------------------
+# Батники и меню новых пунктов
+# --------------------------------------------------------------------------
+def test_menu_knows_points_42_and_43():
+    text = (Path(__file__).resolve().parent.parent
+            / "start_menu.bat").read_text(encoding="utf-8", errors="replace")
+    assert "Выбор (0-43)" in text
+    assert "42  -  Сменить папку данных" in text
+    assert "43  -  Доставить недостающие библиотеки" in text
+    assert ':folder' in text and ':deps' in text
+    assert 'if "%choice%"=="42" goto folder' in text
+    assert 'if "%choice%"=="43" goto deps' in text
+
+
+def test_new_bats_are_double_clickable():
+    root = Path(__file__).resolve().parent.parent
+    for name in ("scripts/choose_folder.bat", "scripts/install_deps.bat"):
+        path = root / name
+        text = path.read_text(encoding="utf-8", errors="replace")
+        assert "chcp 65001" in text, name            # русский текст в консоли
+        assert ".venv\\Scripts\\python.exe" in text, name
+        assert "venv\\Scripts\\python.exe" in text, name
+        assert "pause" in text, name                 # окно не закрывается молча
+        assert path.read_bytes().count(b"\r\n") > 5  # CRLF (иначе cmd рвёт строки)
+
+
+def test_reports_list_shows_new_reports():
+    from scripts import show_reports
+
+    names = [name for name, _title in show_reports.KNOWN_REPORTS]
+    assert "install_packages_report.txt" in names
+    assert "data_root_report.txt" in names

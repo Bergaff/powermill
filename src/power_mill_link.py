@@ -206,16 +206,28 @@ def find_install_dirs(extra: list[str] | None = None) -> list[Path]:
         path = Path(raw)
         if path.exists():
             found.append(path)
-    # рядом с установкой могут быть версии вида «PowerMill 2027»
+    # рядом с установкой могут быть версии вида «PowerMill 2027»; у Autodesk
+    # бывает и на уровень глубже: «...\Autodesk\PowerMill 2026\PowerMill 2026»
     for parent in (Path(r"E:\powermill 2026"), Path(r"C:\Program Files\Autodesk")):
-        if parent.exists():
+        if not parent.exists():
+            continue
+        try:
+            children = [child for child in parent.iterdir() if child.is_dir()]
+        except OSError:
+            children = []
+        for child in children:
+            if "powermill" in child.name.lower() and child not in found:
+                found.append(child)
+            if not any(word in child.name.lower()
+                       for word in ("powermill", "autodesk")):
+                continue
             try:
-                for child in parent.iterdir():
-                    if child.is_dir() and "powermill" in child.name.lower():
-                        if child not in found:
-                            found.append(child)
+                for deeper in child.iterdir():
+                    if (deeper.is_dir() and "powermill" in deeper.name.lower()
+                            and deeper not in found):
+                        found.append(deeper)
             except OSError:
-                pass
+                continue
     return found
 
 

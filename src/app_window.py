@@ -184,7 +184,8 @@ def header_lines(data_root: Path | str = DATA_ROOT,
 
         if getattr(config, "DATA_ROOT_NOTE", None):
             lines.append("(!) Папка данных перенесена автоматически — причина "
-                         "в журнале (кнопка «Папка данных…» выберет другую)")
+                         "в журнале (кнопка «Папка данных: сменить…» выберет "
+                         "другую)")
     except Exception:                                        # noqa: BLE001
         pass
     from src import pm_com
@@ -323,22 +324,38 @@ class AppWindow:
         self.log_menu.add_command(label="Очистить журнал", command=self.clear_log)
 
     def _build_footer(self) -> None:
+        """Две строки кнопок: «что настроить» сверху, «что делать» снизу.
+
+        Кнопок стало больше (папка данных, установка библиотек, перезапуск),
+        и в одну строку они уже не влезали на маленьком экране.
+        """
         tk = self.tk
         frame = tk.Frame(self.root, padx=10, pady=8)
         frame.pack(fill="x")
-        self.status = tk.Label(frame, text="Готов", anchor="w", font=("Segoe UI", 9))
-        self.status.pack(side="left")
-        tk.Button(frame, text="Остановить", command=self.stop).pack(side="right", padx=2)
-        tk.Button(frame, text="Проверка компьютера",
-                  command=lambda: self.start_key("doctor")).pack(side="right", padx=2)
-        tk.Button(frame, text="Отчёты",
-                  command=lambda: self.start_key("reports")).pack(side="right", padx=2)
-        tk.Button(frame, text="Связь с PowerMill",
-                  command=self.check_link).pack(side="right", padx=2)
-        tk.Button(frame, text="Папка данных…",
+
+        top = tk.Frame(frame)
+        top.pack(fill="x")
+        tk.Button(top, text="Папка данных: сменить…",
                   command=self.choose_folder).pack(side="left", padx=2)
-        tk.Button(frame, text="Копировать журнал",
-                  command=self.copy_all).pack(side="left", padx=2)
+        tk.Button(top, text="Установить недостающее",
+                  command=self.install_missing).pack(side="left", padx=2)
+        tk.Button(top, text="Связь с PowerMill",
+                  command=self.check_link).pack(side="left", padx=2)
+        tk.Button(top, text="Проверка компьютера",
+                  command=lambda: self.start_key("doctor")).pack(side="left", padx=2)
+        tk.Button(top, text="Отчёты",
+                  command=lambda: self.start_key("reports")).pack(side="left", padx=2)
+
+        bottom = tk.Frame(frame)
+        bottom.pack(fill="x", pady=(6, 0))
+        self.status = tk.Label(bottom, text="Готов", anchor="w", font=("Segoe UI", 9))
+        self.status.pack(side="left")
+        tk.Button(bottom, text="Остановить",
+                  command=self.stop).pack(side="right", padx=2)
+        tk.Button(bottom, text="Перезапустить окно",
+                  command=self.restart_window).pack(side="right", padx=2)
+        tk.Button(bottom, text="Копировать журнал",
+                  command=self.copy_all).pack(side="right", padx=2)
 
     # ---------------- журнал ----------------
     # ---------------- журнал ----------------
@@ -442,12 +459,16 @@ class AppWindow:
         self.queue.put("__DONE__")
 
     def choose_folder(self) -> None:
-        """Выбор папки для данных (аналог вопроса в install.bat)."""
+        """Выбор папки для данных (аналог вопроса в install.bat и пункта 42)."""
         from tkinter import filedialog
 
         self.write("")
         self.write("=== Папка данных ===")
+        import config
+
         current = str(DATA_ROOT) if Path(DATA_ROOT).exists() else str(Path.home())
+        self.write(f"Сейчас: {config.DATA_ROOT} "
+                   f"(источник: {getattr(config, 'DATA_ROOT_SOURCE', '—')})")
         chosen = filedialog.askdirectory(
             title="Куда складывать данные PowerMill AI (справка, базы, отчёты)",
             initialdir=current, mustexist=False)
@@ -456,6 +477,76 @@ class AppWindow:
             return
         self.write_many(apply_folder_choice(chosen))
         self.refresh_state()
+        self.write("Нажми «Перезапустить окно» — тогда новая папка подхватится "
+                   "целиком.")
+
+    def install_missing(self) -> None:
+        """Ставит недостающие библиотеки в тот же Python (пункт 43, но из окна)."""
+        from src import deps
+
+        self.write("")
+        self.write("=== Библиотеки ===")
+        for line in deps.summary_lines():
+            self.write("  " + line)
+        lack = deps.missing(base=True)
+        if not lack:
+            self.write("Ставить нечего — обязательные библиотеки на месте.")
+            heavy = deps.missing(base=False, optional=True)
+            if heavy:
+                self.write("По желанию нет: " +
+                           ", ".join(spec.package for spec in heavy))
+                self.write("    Это тяжёлое (поиск по справке, разбор видео): "
+                           "ставь ночью пунктом 43 меню с ключом --all.")
+            return
+        if self.busy:
+            self.write("Сейчас уже идёт другое действие — дождись конца.")
+            return
+        self.busy = True
+        self.set_status("Ставлю библиотеки…")
+        threading.Thread(target=self._install_thread, args=(lack,),
+                         daemon=True).start()
+
+    def _install_thread(self, lack) -> None:
+        from src import deps
+
+        try:
+            ok, message = deps.install(lack, log=self.queue.put)
+        except Exception as error:                            # noqa: BLE001
+            ok, message = False, f"установка не удалась: {error}"
+        self.queue.put(("[OK] " if ok else "[!] ") + message)
+        still = deps.missing(base=True)
+        if still:
+            self.queue.put("Всё ещё не видно: " +
+                           ", ".join(spec.package for spec in still))
+            self.queue.put("Смотри текст pip выше. Частые причины: нет интернета; "
+                           "прокси/SSL; pip не найден в этом Python.")
+        else:
+            self.queue.put("✔ обязательные библиотеки на месте — проверяю связь "
+                           "с PowerMill заново")
+        try:
+            lines = deps.report_lines(installed=[s.package for s in lack])
+            saved = deps.save_report(lines)
+            self.queue.put(f"📝 Отчёт: {saved}")
+        except Exception:                                     # noqa: BLE001
+            pass
+        self.queue.put("__DONE__")
+        if not still:
+            # Проверку связи запускаем из главного потока (через очередь):
+            # Tk нельзя трогать из рабочих потоков.
+            self.queue.put("__LINK__")
+
+    def restart_window(self) -> None:
+        """Открывает окно заново — нужно после смены папки данных."""
+        self.stop()
+        try:
+            subprocess.Popen([sys.executable, "-m", "src.app_window"],
+                             cwd=str(self.project_dir))
+            self.write("Открыл новое окно — это можно закрыть.")
+        except OSError as error:
+            self.write(f"(!) не удалось перезапустить окно: {error}")
+            self.write("    Запусти ярлык «PowerMill AI» на рабочем столе.")
+            return
+        self.root.after(500, self.root.destroy)
 
     def start_key(self, key: str) -> None:
         action = pm_buttons.by_key(key)
@@ -540,6 +631,9 @@ class AppWindow:
                     self.set_status("Готов")
                     self.refresh_state()
                     continue
+                if line == "__LINK__":
+                    self.check_link()
+                    continue
                 self.write(line)
         except Empty:
             pass
@@ -565,6 +659,17 @@ class AppWindow:
         self.write("материал, фрезу и припуски.")
         self.write("Журнал можно выделять мышью и копировать: Ctrl+C, Ctrl+A, "
                    "«Копировать журнал» или правая кнопка мыши.")
+        # Про библиотеки говорим сразу: без них связи с PowerMill не будет, а
+        # человек ждёт от окна работы, а не поиска причины.
+        from src import deps
+
+        lack = deps.missing(base=True)
+        if lack:
+            self.write("Не хватает библиотек: " +
+                       ", ".join(spec.package for spec in lack))
+            self.write("  Без них нет связи с PowerMill и разбора справки.")
+            self.write("  Нажми «Установить недостающее» — поставлю в тот же "
+                       "Python, из которого работает окно.")
         # Связь проверяем сразу при запуске: работать без PowerMill всё равно
         # нельзя, и лучше узнать об этом в первую секунду, а не в середине работы.
         self.root.after(400, self.check_link)

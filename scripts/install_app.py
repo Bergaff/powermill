@@ -11,8 +11,10 @@
 2. спрашивает папку для данных (по умолчанию: диск E:, если он есть, иначе
    папка пользователя) и пишет её в `install.json` рядом с кодом — тогда
    программе не нужны переменные окружения;
-3. создаёт виртуальное окружение `.venv` и ставит библиотеки из
-   `requirements.txt`;
+3. создаёт виртуальное окружение `.venv`; **сначала ставит обязательный набор
+   библиотек** (pywin32, psutil, requests, beautifulsoup4, lxml — без них нет
+   связи с PowerMill), а тяжёлые (chromadb, sentence-transformers, torch)
+   ставит после вопроса: они на несколько гигабайт и на полчаса;
 4. создаёт ярлыки: на рабочем столе и в меню «Пуск» (окно приложения, меню
    пунктов, отчёты);
 5. запускает проверку компьютера (пункт 40) и сохраняет отчёт;
@@ -211,27 +213,31 @@ def create_venv(printer: Printer) -> Path | None:
     return python
 
 
-def install_requirements(printer: Printer, python: Path | None,
-                         full: bool = True) -> bool:
-    """Ставит библиотеки. `full=False` — только самое необходимое."""
-    if python is None:
-        return False
-    requirements = CODE_DIR / "requirements.txt"
-    if not requirements.exists():
-        printer.print("  (!) requirements.txt не найден — пропускаю установку "
-                      "библиотек")
-        return False
+def base_package_names() -> list[str]:
+    """Обязательный набор — из одного места (src\\deps.py), с запасным списком.
 
-    if full:
-        targets = ["-r", str(requirements)]
-    else:
-        targets = ["requests", "beautifulsoup4", "lxml"]
-
-    command = [str(python), "-m", "pip", "install", "--upgrade", "-q", *targets]
-    printer.print(f"  Ставлю библиотеки: {' '.join(targets)}")
-    printer.print("  (это самая долгая часть — от 2 до 15 минут)")
+    install.bat запускается системным Python до создания окружения, поэтому
+    импорт проекта обёрнут в try: если что-то не так, установка всё равно идёт.
+    """
+    fallback = ["pywin32", "psutil", "requests", "beautifulsoup4", "lxml"]
     try:
-        done = subprocess.run(command, capture_output=True, text=True, timeout=3600)
+        sys.path.insert(0, str(CODE_DIR))
+        from src import deps                            # noqa: PLC0415
+
+        names = [spec.package for spec in deps.BASE_PACKAGES]
+        return names or fallback
+    except Exception:                                    # noqa: BLE001
+        return fallback
+
+
+def pip_install(printer: Printer, python: Path,
+                targets: list[str]) -> bool:
+    """Ставит список пакетов тем Python, который передан. Говорит, что вышло."""
+    command = [str(python), "-m", "pip", "install", "--upgrade",
+               "--upgrade-strategy", "only-if-needed", *targets]
+    printer.print(f"  Ставлю: {' '.join(targets)}")
+    try:
+        done = subprocess.run(command, capture_output=True, text=True, timeout=5400)
     except (OSError, subprocess.TimeoutExpired) as error:
         printer.print(f"  ✘ pip не сработал: {error}")
         return False
@@ -240,11 +246,80 @@ def install_requirements(printer: Printer, python: Path | None,
         tail = (done.stdout or "")[-1500:] + (done.stderr or "")[-1500:]
         for line in tail.splitlines()[-12:]:
             printer.print("    " + line)
-        printer.print("  Программа всё равно может работать: окно, режимы резания")
-        printer.print("  и макросы не зависят от этих библиотек.")
         return False
-    printer.print("  ✔ библиотеки установлены")
     return True
+
+
+def verify_base(printer: Printer, python: Path) -> list[str]:
+    """Проверяет импорт в ДОЧЕРНЕМ процессе: что реально видно программе."""
+    modules = {"pywin32": "win32com.client", "psutil": "psutil",
+               "requests": "requests", "beautifulsoup4": "bs4", "lxml": "lxml"}
+    missing: list[str] = []
+    for package, module in modules.items():
+        try:
+            done = subprocess.run([str(python), "-c", f"import {module}"],
+                                  capture_output=True, text=True, timeout=120)
+        except (OSError, subprocess.TimeoutExpired):
+            missing.append(package)
+            continue
+        if done.returncode != 0:
+            missing.append(package)
+    if missing:
+        printer.print("  (!) не видно: " + ", ".join(missing))
+    else:
+        printer.print("  ✔ обязательные библиотеки на месте (связь с PowerMill "
+                      "будет работать)")
+    return missing
+
+
+def install_requirements(printer: Printer, python: Path | None,
+                         heavy: bool | None = None,
+                         assume_yes: bool = False) -> bool:
+    """Библиотеки. Сначала обязательные, потом (по вопросу) тяжёлые.
+
+    `heavy=True` — ставить тяжёлые без вопроса (`--full`), `False` — не ставить
+    (`--light`), `None` — спросить.
+    """
+    if python is None:
+        return False
+    ok = True
+
+    base = base_package_names()
+    printer.print("  [обязательные] без них нет связи с PowerMill и разбора "
+                  "справки")
+    base_ok = pip_install(printer, python, base)
+    missing_after = verify_base(printer, python) if base_ok else base
+    if not base_ok or missing_after:
+        ok = False
+        printer.print("  Это можно доделать в любой момент: окно приложения -> "
+                      "кнопка «Установить недостающее» (или пункт 43 меню).")
+    printer.print("")
+
+    requirements = CODE_DIR / "requirements.txt"
+    heavy_targets = ["-r", str(requirements)] if requirements.exists() else []
+    if not heavy_targets:
+        printer.print("  (requirements.txt не найден — тяжёлые библиотеки "
+                      "пропускаю)")
+        return ok
+
+    if heavy is None:
+        printer.print("  [по желанию] поиск по справке, базы, разбор видео")
+        printer.print("  Это chromadb, sentence-transformers и torch — "
+                      "несколько гигабайт и до получаса.")
+        heavy = assume_yes or ask_yes("  Поставить их сейчас?", True)
+    if not heavy:
+        printer.print("  Хорошо: тяжёлые поставим позже — пункт 43 меню с "
+                      "ключом --all.")
+        return ok
+
+    printer.print("  [по желанию] это самая долгая часть — от 5 до 30 минут")
+    if not pip_install(printer, python, heavy_targets):
+        printer.print("  Программа работает и без них: окно, режимы резания, "
+                      "макросы, связь с PowerMill.")
+        printer.print("  Доставить позже: пункт 43 меню (ключ --all).")
+        return ok
+    printer.print("  ✔ тяжёлые библиотеки установлены")
+    return ok
 
 
 def create_shortcuts(printer: Printer, project_dir: Path = CODE_DIR) -> bool:
@@ -311,7 +386,9 @@ def main() -> int:
     parser.add_argument("--yes", action="store_true",
                         help="не задавать вопросов, всё согласовать")
     parser.add_argument("--light", action="store_true",
-                        help="поставить только необходимые библиотеки")
+                        help="поставить только обязательные библиотеки")
+    parser.add_argument("--full", action="store_true",
+                        help="поставить и тяжёлые библиотеки (без вопроса)")
     parser.add_argument("--no-shortcuts", action="store_true",
                         help="не создавать ярлыки")
     args = parser.parse_args()
@@ -370,9 +447,27 @@ def main() -> int:
     printer.print()
     printer.print("[3/6] Виртуальное окружение и библиотеки")
     python = create_venv(printer)
-    libraries_ok = install_requirements(printer, python, full=not args.light)
+    heavy = False if args.light else (True if args.full else None)
+    libraries_ok = install_requirements(printer, python, heavy=heavy,
+                                        assume_yes=args.yes)
     if not libraries_ok:
-        printer.print("  (можно поставить позже: start_menu.bat -> 27)")
+        printer.print("  (можно доделать позже: окно -> «Установить "
+                      "недостающее» или start_menu.bat -> 43)")
+    if python is not None:
+        # Отчёт «что видно окружению» пишет сам пункт 43 — из того же Python,
+        # в который ставили. Печатаем короткий хвост, чтобы он попал в отчёт
+        # установки (его человек присылает в чат).
+        printer.print("  Проверяю библиотеки глазами окружения…")
+        try:
+            done = subprocess.run([str(python), "-m", "scripts.install_deps",
+                                   "--check"], cwd=str(CODE_DIR),
+                                  capture_output=True, text=True, timeout=600)
+            tail = (done.stdout or "").strip().splitlines()
+            for line in tail[-14:]:
+                printer.print("    " + line)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            printer.print(f"    (проверка не прошла: {error})")
+        printer.print("  Отчёт по библиотекам: output\\install_packages_report.txt")
 
     printer.print()
     printer.print("[4/6] Ярлыки")

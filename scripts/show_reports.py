@@ -39,6 +39,8 @@ KNOWN_REPORTS = (
     ("pm_plugin_build_report.txt", "Сборка плагина-панели (шаг 2.3б, пункт 38)"),
     ("doctor_report.txt", "Проверка компьютера (пункт 40)"),
     ("pm_link_report.txt", "Проверка связи с PowerMill (пункт 41)"),
+    ("install_packages_report.txt", "Библиотеки: что стоит, чего нет (пункт 43)"),
+    ("data_root_report.txt", "Смена папки данных (пункт 42)"),
     ("uninstall_report.txt", "Удаление программы"),
     ("pm_tool_word.txt", "Слово создания фрезы, которое сработало"),
     ("pm_project.txt", "Снимок проекта от макроса PowerMill (пункт 24)"),

@@ -67,6 +67,8 @@ REPORT_TITLES = {
     "pm_plugin_build_report.txt": "Сборка плагина (пункт 38)",
     "doctor_report.txt": "Проверка компьютера (пункт 40)",
     "pm_link_report.txt": "Связь с PowerMill (пункт 41)",
+    "install_packages_report.txt": "Библиотеки: что стоит (пункт 43)",
+    "data_root_report.txt": "Смена папки данных (пункт 42)",
     "pm_tool_word.txt": "Слово создания фрезы",
     "pm_project.txt": "Снимок проекта от макроса",
     "pm_trace_1.txt": "Самопроверка моста: шаг 1 — файл записан",

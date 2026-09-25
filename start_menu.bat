@@ -67,12 +67,15 @@ echo     39  -  Окно приложения PowerMill AI (и ярлык)
 echo     40  -  Проверить компьютер: готов ли он к работе
 echo     41  -  Проверить связь приложения и PowerMill
 echo.
+echo     42  -  Сменить папку данных (справка, базы, отчёты)
+echo     43  -  Доставить недостающие библиотеки
+echo.
 echo      0  -  Выход
 echo.
 echo   Внутри любых экранов слово  «назад»  или  «меню»
 echo   возвращает к этому списку.
 echo.
-set /p choice="   Выбор (0-41): "
+set /p choice="   Выбор (0-43): "
 
 if "%choice%"=="1"  goto chat
 if "%choice%"=="2"  goto search
@@ -115,6 +118,8 @@ if "%choice%"=="38" goto plugin2
 if "%choice%"=="39" goto app
 if "%choice%"=="40" goto doctor
 if "%choice%"=="41" goto link
+if "%choice%"=="42" goto folder
+if "%choice%"=="43" goto deps
 if "%choice%"=="0"  exit /b 0
 if /i "%choice%"=="назад" exit /b 0
 if /i "%choice%"=="меню" goto menu
@@ -246,6 +251,14 @@ goto menu
 
 :link
 call "%~dp0scripts\check_link.bat"
+goto menu
+
+:folder
+call "%~dp0scripts\choose_folder.bat"
+goto menu
+
+:deps
+call "%~dp0scripts\install_deps.bat"
 goto menu
 
 :pmmacros
