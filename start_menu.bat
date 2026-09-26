@@ -70,12 +70,15 @@ echo.
 echo     42  -  Сменить папку данных (справка, базы, отчёты)
 echo     43  -  Доставить недостающие библиотеки
 echo.
+echo     44  -  Подключить ИИ-клиент по MCP (Claude, Cursor, VS Code)
+echo     45  -  Проверить MCP-сервер (что он умеет)
+echo.
 echo      0  -  Выход
 echo.
 echo   Внутри любых экранов слово  «назад»  или  «меню»
 echo   возвращает к этому списку.
 echo.
-set /p choice="   Выбор (0-43): "
+set /p choice="   Выбор (0-45): "
 
 if "%choice%"=="1"  goto chat
 if "%choice%"=="2"  goto search
@@ -120,6 +123,8 @@ if "%choice%"=="40" goto doctor
 if "%choice%"=="41" goto link
 if "%choice%"=="42" goto folder
 if "%choice%"=="43" goto deps
+if "%choice%"=="44" goto mcp
+if "%choice%"=="45" goto mcpserver
 if "%choice%"=="0"  exit /b 0
 if /i "%choice%"=="назад" exit /b 0
 if /i "%choice%"=="меню" goto menu
@@ -259,6 +264,14 @@ goto menu
 
 :deps
 call "%~dp0scripts\install_deps.bat"
+goto menu
+
+:mcp
+call "%~dp0scripts\mcp_setup.bat"
+goto menu
+
+:mcpserver
+call "%~dp0scripts\mcp_server.bat"
 goto menu
 
 :pmmacros

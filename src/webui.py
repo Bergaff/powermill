@@ -69,6 +69,7 @@ REPORT_TITLES = {
     "pm_link_report.txt": "Связь с PowerMill (пункт 41)",
     "install_packages_report.txt": "Библиотеки: что стоит (пункт 43)",
     "data_root_report.txt": "Смена папки данных (пункт 42)",
+    "mcp_report.txt": "Подключение по MCP (пункт 44)",
     "vector_db_report.txt": "Векторная база (пункт 6)",
     "pm_tool_word.txt": "Слово создания фрезы",
     "pm_project.txt": "Снимок проекта от макроса",

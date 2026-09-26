@@ -188,6 +188,18 @@ ACTIONS: tuple[Action, ...] = (
         launcher="PM_AI_DOCTOR.mac",
         group=GROUP_SETUP,
     ),
+    Action(
+        key="mcp",
+        label="Подключить ИИ-клиент (MCP)",
+        hint="Прописать PowerMill AI в Claude / Cursor / VS Code: в их чате "
+             "появятся наши инструменты (пункт 44)",
+        kind="bat",
+        target=r"scripts\mcp_setup.bat",
+        bat=r"scripts\mcp_setup.bat",
+        launcher="PM_AI_MCP.mac",
+        asks=True,
+        group=GROUP_SETUP,
+    ),
     # --- без вопросов: результат идёт в журнал панели ---
     Action(
         key="chat",

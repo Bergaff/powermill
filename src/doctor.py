@@ -455,6 +455,36 @@ def check_install_settings(project_dir: Path | str = PROJECT_ROOT,
                  "и программа перестанет зависеть от переменных окружения.")
 
 
+def check_mcp(project_dir: Path | str = PROJECT_ROOT) -> Check:
+    """Готов ли MCP-разъём: есть ли сервер и прописан ли он в клиенте.
+
+    Это не «ошибка», если не прописан: окно, лента и плагин работают и без
+    клиента. Но если человек хочет спрашивать из Claude/Cursor — проверим, что
+    путь есть и что клиент знает про наш сервер.
+    """
+    from scripts import mcp_setup
+
+    server = Path(project_dir) / "scripts" / "mcp_server.py"
+    data = Path(project_dir) / "src" / "mcp_server.py"
+    if not server.exists() or not data.exists():
+        return Check("Подключение к ИИ по MCP (пункт 44)", STATUS_SKIP,
+                     "сервера нет в этой сборке")
+    try:
+        found = mcp_setup.configured_clients()
+    except Exception as error:                                # noqa: BLE001
+        return Check("Подключение к ИИ по MCP (пункт 44)", STATUS_WARN,
+                     f"не смог посмотреть настройки: {error}",
+                     "Прописать/убрать можно пунктом 44 меню.")
+    if found:
+        return Check("Подключение к ИИ по MCP (пункт 44)", STATUS_OK,
+                     "; ".join(client.title for client in found))
+    return Check("Подключение к ИИ по MCP (пункт 44)", STATUS_WARN,
+                 "сервер готов, но ни в одном клиенте не прописан",
+                 "Это по желанию: окно, лента и панель работают и так.\n"
+                 "Хочешь спрашивать из Claude / Cursor / VS Code — пункт 44 "
+                 "меню прописывает сервер (с копией настроек .bak).")
+
+
 def check_tests(project_dir: Path | str = PROJECT_ROOT) -> Check:
     folder = Path(project_dir) / "tests"
     if not folder.exists():
@@ -487,6 +517,7 @@ def collect(data_root: Path | str = DATA_ROOT,
     report.checks.extend(check_brain())
     report.checks.append(check_ui(project_dir))
     report.checks.append(check_install_settings(project_dir, data_root))
+    report.checks.append(check_mcp(project_dir))
     report.checks.append(check_tests(project_dir))
     return report
 

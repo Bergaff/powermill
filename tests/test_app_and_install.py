@@ -790,12 +790,25 @@ def test_installer_tells_how_to_finish_if_pip_failed(monkeypatch):
 def test_menu_knows_points_42_and_43():
     text = (Path(__file__).resolve().parent.parent
             / "start_menu.bat").read_text(encoding="utf-8", errors="replace")
-    assert "Выбор (0-43)" in text
     assert "42  -  Сменить папку данных" in text
     assert "43  -  Доставить недостающие библиотеки" in text
     assert ':folder' in text and ':deps' in text
     assert 'if "%choice%"=="42" goto folder' in text
     assert 'if "%choice%"=="43" goto deps' in text
+
+
+def test_menu_knows_points_44_and_45():
+    """MCP: подключение к ИИ-клиенту и проверка сервера."""
+    text = (Path(__file__).resolve().parent.parent
+            / "start_menu.bat").read_text(encoding="utf-8", errors="replace")
+    assert "Выбор (0-45)" in text
+    assert "44  -  Подключить ИИ-клиент по MCP" in text
+    assert "45  -  Проверить MCP-сервер" in text
+    assert ':mcp' in text and ':mcpserver' in text
+    assert 'if "%choice%"=="44" goto mcp' in text
+    assert 'if "%choice%"=="45" goto mcpserver' in text
+    for name in (r"scripts\mcp_setup.bat", r"scripts\mcp_server.bat"):
+        assert name in text, name
 
 
 def test_new_bats_are_double_clickable():

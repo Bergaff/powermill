@@ -35,4 +35,7 @@ config_local.py
 
 # Локальная установка (install.bat пишет эти файлы на конкретном компьютере)
 install.json
+.mcp.json
+*.mcp.json
+
 install_report.txt

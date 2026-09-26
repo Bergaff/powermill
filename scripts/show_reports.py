@@ -41,6 +41,7 @@ KNOWN_REPORTS = (
     ("pm_link_report.txt", "Проверка связи с PowerMill (пункт 41)"),
     ("install_packages_report.txt", "Библиотеки: что стоит, чего нет (пункт 43)"),
     ("data_root_report.txt", "Смена папки данных (пункт 42)"),
+    ("mcp_report.txt", "Подключение к ИИ-клиенту по MCP (пункт 44)"),
     ("vector_db_report.txt", "Векторная база: сколько записей (пункт 6)"),
     ("uninstall_report.txt", "Удаление программы"),
     ("pm_tool_word.txt", "Слово создания фрезы, которое сработало"),
