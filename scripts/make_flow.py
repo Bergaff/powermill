@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from config import OUTPUT_DIR                          # noqa: E402
 from src import pml_files                              # noqa: E402
+from src import knowledge                             # noqa: E402
 from src import pm_check, pm_com, pm_flow, pm_nc, pm_operation   # noqa: E402
 from src.applog import start_log                        # noqa: E402
 from src import console
@@ -469,6 +470,12 @@ def main() -> int:
     print(report.format())
     print()
     print(f"  Отчёт: {path} (открывается пунктом 29 меню)")
+
+    # Урок на будущее — только если что-то пошло не так (иначе не пристаём).
+    problems = report.problems()
+    if problems:
+        knowledge.ask_lesson(problems, task=report.task_text(),
+                             source="make_flow", reader=read_line)
     return 0
 
 

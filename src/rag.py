@@ -34,7 +34,7 @@ from config import (
     SOURCE_MAX_DISTANCE,
     TOP_K,
 )
-from src import cutting, llm, pml_vocab, project_context
+from src import cutting, knowledge, llm, pml_vocab, project_context
 from src.hardware import set_process_priority
 
 os.environ.setdefault("OLLAMA_HOST", OLLAMA_BASE_URL)
@@ -170,6 +170,23 @@ def _format_hits(hits: list[dict], numbered: bool = True, start: int = 1) -> str
     return "\n---\n".join(parts)
 
 
+def _knowledge_note(block: str) -> str:
+    """Пометка, что ответ опирался на знания технолога и считался локально."""
+    if not block:
+        return ""
+    rules = block.count("\n  - ")
+    lessons = block.count("\n  дело: ")
+    parts = []
+    if rules:
+        parts.append(f"правил: {rules}")
+    if lessons:
+        parts.append(f"похожих случаев: {lessons}")
+    tail = ("🧠 Учтены твои знания"
+            + (f" ({', '.join(parts)})" if parts else "")
+            + " — этот ответ считала локальная модель, в облако данные не уходили.")
+    return "\n\n" + tail
+
+
 def _format_sources(hits: list[dict]) -> str:
     if not hits:
         return "📚 Источники: не найдено (ни один фрагмент не прошёл фильтр)"
@@ -251,14 +268,27 @@ class PowerMillAI:
 
     # ---------------- LLM ----------------
     def _generate(self, model: str, prompt: str, temperature: float = 0.2,
-                  num_predict: int = 2048, num_ctx: int = 4096) -> str:
+                  num_predict: int = 2048, num_ctx: int = 4096,
+                  local_only: bool = False) -> str:
         """Один ответ модели: облачный API, если настроен, иначе локальная Ollama.
 
         Модель выбирается не по имени, а по режиму (src/llm.py):
         * `backend=api` — идём в OpenAI-совместимый сервис с ключом;
         * `backend=local` — как раньше, в Ollama.
+
+        `local_only=True` (в промпте правила/уроки/имена проекта) — облако
+        запрещено: считаем локальной моделью, а если её нет — честно говорим,
+        что не ответим, и НЕ отправляем данные наружу.
         """
         settings = llm.load_settings()
+        if local_only and settings["backend"] == "api":
+            settings = dict(settings, backend="local")
+            if ollama is None:
+                return ("❌ В ответ входят твои правила/уроки (или имена объектов "
+                        "проекта), а локальной модели нет — в облако эти данные не "
+                        "отправляю.\n"
+                        "   Поставь Ollama и модель: пункт 14 меню "
+                        "(или убери правила пунктом 48).")
         if settings["backend"] == "api":
             api_model = (settings.get("code_model") if model == LLM_CODE_MODEL
                          else settings.get("model")) or settings.get("model", "")
@@ -297,9 +327,14 @@ class PowerMillAI:
         project = project_context.to_prompt_block()
         if project:
             context = project + "\n\n" + context
+        known = knowledge.prompt_block(query)
+        if known:
+            context = known + "\n\n" + context
         prompt = _render(SYSTEM_PROMPT_CHAT, context)
-        answer = self._generate(LLM_MODEL, f"{prompt}\n\nВопрос технолога: {query}\n\nОтвет эксперта:")
-        return f"{answer}\n\n{_format_sources(hits)}"
+        answer = self._generate(LLM_MODEL,
+                                f"{prompt}\n\nВопрос технолога: {query}\n\nОтвет эксперта:",
+                                local_only=bool(known or project))
+        return f"{answer}\n\n{_format_sources(hits)}{_knowledge_note(known)}"
 
     def macro(self, task: str, save: bool = True) -> str:
         """Генерация PML-макроса: с проверенными именами и проверкой результата.
@@ -334,13 +369,18 @@ class PowerMillAI:
                            "Разбери справку (пункт 4 меню), и макросы станут точнее.")
 
         project_block = project_context.to_prompt_block(project)
+        known = knowledge.prompt_block(task)
+        extra = vocabulary
+        if project_block:
+            extra += "\n\n" + project_block
+        if known:
+            extra += "\n\n" + known
 
-        prompt = _render(SYSTEM_PROMPT_MACRO, _format_hits(hits),
-                         vocabulary=vocabulary + ("\n\n" + project_block
-                                                  if project_block else ""))
+        prompt = _render(SYSTEM_PROMPT_MACRO, _format_hits(hits), vocabulary=extra)
         code = self._generate(LLM_CODE_MODEL,
                               f"{prompt}\n\nЗадача: {task}\n\nКод PML:",
-                              temperature=0.2)
+                              temperature=0.2,
+                              local_only=bool(known or project_block))
 
         report = pml_vocab.validate(code, vocab)
         out = f"⚙️ PML-макрос по задаче: {task}\n\n{code}"
@@ -349,7 +389,7 @@ class PowerMillAI:
             path = save_macro(code, task, check=report)
             if path:
                 out += f"\n\n💾 Сохранён файл: {path}"
-        out += f"\n\n{_format_sources(hits)}"
+        out += f"\n\n{_format_sources(hits)}{_knowledge_note(known)}"
         return out
 
     def cutting_answer(self, text: str) -> str:
@@ -362,8 +402,14 @@ class PowerMillAI:
         hits = self._retrieve(f"ошибка {text}", top_k=max(TOP_K, 5))
         if not hits:
             hits = self._retrieve(text, top_k=max(TOP_K, 5))
-        prompt = _render(SYSTEM_PROMPT_ERROR, _format_hits(hits))
-        answer = self._generate(LLM_MODEL, f"{prompt}\n\nТекст ошибки: {text}\n\nРазбор:")
+        known = knowledge.prompt_block(text)
+        context = _format_hits(hits)
+        if known:
+            context = known + "\n\n" + context
+        prompt = _render(SYSTEM_PROMPT_ERROR, context)
+        answer = self._generate(LLM_MODEL,
+                                f"{prompt}\n\nТекст ошибки: {text}\n\nРазбор:",
+                                local_only=bool(known))
         return f"{answer}\n\n{_format_sources(hits)}"
 
     def compare(self, query: str) -> str:

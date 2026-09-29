@@ -332,7 +332,7 @@ def test_script_interactive_set_from_input(budget_files, monkeypatch, capfd):
 def test_menu_has_point_46():
     text = (PROJECT_ROOT / "start_menu.bat").read_text(encoding="utf-8",
                                                        errors="replace")
-    assert "Выбор (0-47)" in text
+    assert "Выбор (0-48)" in text
     assert "46  -  Расходы на ИИ и лимиты" in text
     assert ':spend' in text
     assert 'if "%choice%"=="46" goto spend' in text

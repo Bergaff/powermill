@@ -214,6 +214,18 @@ ACTIONS: tuple[Action, ...] = (
     ),
     # --- без вопросов: результат идёт в журнал панели ---
     Action(
+        key="knowledge",
+        label="Чему учить ассистента",
+        hint="Правила работы и уроки «что было не так и что помогло» (пункт 48): "
+             "ответы с ними считает только локальная модель",
+        kind="bat",
+        target=r"scripts\knowledge.bat",
+        bat=r"scripts\knowledge.bat",
+        launcher="PM_AI_KNOWLEDGE.mac",
+        asks=True,
+        group=GROUP_SETUP,
+    ),
+    Action(
         key="chat",
         label="Чат в браузере",
         hint="Интерфейс с прогрессом и отчётами (пункт 32)",

@@ -82,6 +82,29 @@ class FlowReport:
     def add(self, step: str, status: str, text: str = "") -> None:
         self.steps.append((step, status, text))
 
+    # ---------------- что пошло не так ----------------
+    def problems(self) -> list[str]:
+        """Пропуски, ошибки и предупреждения — то, о чём стоит спросить технолога.
+
+        Пусто — значит всё прошло как обещано: спрашивать не о чем (и не надо).
+        """
+        found: list[str] = []
+        for group in (self.steps, self.check_steps, self.nc_steps):
+            found += [f"{step}: {text or status}"
+                      for step, status, text in group if status in ("fail", "skip")]
+        found += list(self.warnings)
+        return found
+
+    def task_text(self) -> str:
+        """Короткое описание задачи — по нему потом ищутся похожие уроки."""
+        if not self.request:
+            return "поток «сказал: делай»"
+        request = self.request
+        parts = [f"{request.material}, фреза D{request.tool_diameter:g}",
+                 f"шаг {request.stepdown or '—'} мм, ширина {request.stepover or '—'} мм",
+                 f"траектория {request.toolpath_name}"]
+        return "; ".join(parts)
+
     # ---------------- отчёт ----------------
     def format(self) -> str:
         lines = [

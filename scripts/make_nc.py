@@ -17,6 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from config import OUTPUT_DIR                          # noqa: E402
+from src import knowledge                               # noqa: E402
 from src import pm_com, pm_nc                           # noqa: E402
 from src.applog import start_log                        # noqa: E402
 from src import console
@@ -334,6 +335,14 @@ def main() -> int:
     else:
         print("  Файл NC: в папке проекта ncprograms (имя — как у программы)")
     print(f"  Отчёт: {REPORT_FILE} (открывается пунктом 29 меню)")
+
+    # Урок — только когда NC не получилась: тогда ответ технолога особенно ценен.
+    if info is None:
+        problems = [f"файла NC нет: {where}"] + tried
+        knowledge.ask_lesson(problems,
+                             task=f"вывод NC: {name}, траектории "
+                                  f"{', '.join(chosen) or '—'}",
+                             source="make_nc", reader=read_line)
     return 0
 
 

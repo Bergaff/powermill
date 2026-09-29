@@ -306,3 +306,31 @@ def test_macro_goes_to_api_with_vocabulary(settings, monkeypatch):
     prompt = FakeAPI.last_request["messages"][-1]["content"]
     assert "ПРОВЕРЕННЫЕ ИМЕНА" in prompt
     FakeAPI.answer = "Готово, модель fake-1"
+
+
+# --------------------------------------------------------------------------
+# Запрет облака для знаний технолога (пункт 48)
+# --------------------------------------------------------------------------
+def test_local_only_never_touches_the_network(settings):
+    """С правилами/уроками в промпте запрос наружу не уходит вообще."""
+    from src import llm
+
+    FakeAPI.last_request = {}
+    answer = llm.chat("вопрос с моими правилами", settings=settings,
+                      local_only=True)
+    assert "отключ" in answer and "облако" in answer
+    assert FakeAPI.last_request == {}          # ни одного запроса к серверу
+
+
+def test_local_only_message_says_what_to_do(settings):
+    from src import llm
+
+    answer = llm.chat("вопрос", settings=settings, local_only=True)
+    assert "пункт 14" in answer or "Ollama" in answer
+    assert "не уходят" in answer or "не отправляю" in answer
+
+
+def test_without_local_only_the_api_still_works(settings):
+    from src import llm
+
+    assert llm.chat("обычный вопрос", settings=settings) == FakeAPI.answer

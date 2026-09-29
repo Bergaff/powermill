@@ -138,3 +138,84 @@ def test_handle_command_macro_without_task(ai, capsys):
 def test_handle_command_sources_without_query(ai, capsys):
     handle_command("/sources", ai)
     assert "Использование" in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------
+# Знания технолога в ответах (пункт 48): подмешивание + локальный режим
+# --------------------------------------------------------------------------
+@pytest.fixture
+def known(parsed_pages, tmp_path, monkeypatch):
+    """Правило и урок в файлах технолога (не трогаем настоящие)."""
+    from src import knowledge
+
+    monkeypatch.setattr(knowledge, "KNOWLEDGE_DIR", tmp_path / "knowledge")
+    monkeypatch.setattr(knowledge, "RULES_FILE", tmp_path / "knowledge" / "rules.md")
+    monkeypatch.setattr(knowledge, "LESSONS_FILE",
+                        tmp_path / "knowledge" / "lessons.jsonl")
+    knowledge.ensure_files()
+    knowledge.add_rule("в 40Х на D16 ставлю S=4500 F=1200")
+    knowledge.add_lesson(problem="заготовка не определена была",
+                         fix="сделал FORM BLOCK и BLOCK ACCEPT",
+                         task="черновая операция", when="2026-01-01 00:00")
+    return knowledge
+
+
+def capture(ai):
+    """Подменяет генерацию и запоминает, что ушло модели."""
+    seen: dict = {}
+
+    def fake_generate(model, prompt, **kwargs):
+        seen["model"] = model
+        seen["prompt"] = prompt
+        seen.update(kwargs)
+        return "ТЕСТ-ОТВЕТ"
+
+    ai._generate = fake_generate
+    return seen
+
+
+def test_ask_puts_my_rules_into_the_prompt(ai, known):
+    seen = capture(ai)
+    answer = ai.ask("какую подачу ставить")
+    assert "в 40Х на D16 ставлю S=4500 F=1200" in seen["prompt"]
+    assert seen["local_only"] is True               # облако запрещено
+    assert "Учтены твои знания" in answer           # и это видно технологу
+
+
+def test_ask_without_knowledge_keeps_the_cloud_possible(ai):
+    seen = capture(ai)
+    ai.ask("какую подачу ставить")
+    assert seen["local_only"] is False
+
+
+def test_macro_gets_rules_and_similar_lessons(ai, known):
+    seen = capture(ai)
+    ai.macro("черновая операция по стали", save=False)
+    assert "в 40Х на D16 ставлю S=4500 F=1200" in seen["prompt"]
+    assert "FORM BLOCK и BLOCK ACCEPT" in seen["prompt"]
+    assert seen["local_only"] is True
+
+
+def test_error_gets_rules_too(ai, known):
+    seen = capture(ai)
+    ai.error("заготовка не определена или содержит неподходящие значения")
+    assert seen["local_only"] is True
+
+
+def test_generate_without_local_model_tells_the_truth(ai, monkeypatch):
+    """Облако настроено, но в промпте знания → идём локально, а модели нет."""
+    from src import llm, rag
+
+    monkeypatch.setattr(llm, "load_settings",
+                        lambda: {"backend": "api", "base_url": "http://x/v1",
+                                 "api_key": "k", "model": "m", "code_model": "m",
+                                 "temperature": 0.2, "timeout": 5.0,
+                                 "provider": "custom", "source": "тест"})
+    monkeypatch.setattr(llm, "chat",
+                        lambda *a, **k: pytest.fail("в облако уходить нельзя"))
+    monkeypatch.setattr(rag, "ollama", None)
+
+    # берём настоящий метод класса (в фикстуре экземпляр подменён заглушкой)
+    answer = rag.PowerMillAI._generate(ai, "модель", "промпт", local_only=True)
+    assert "не отправляю" in answer
+    assert "локальной модели нет" in answer

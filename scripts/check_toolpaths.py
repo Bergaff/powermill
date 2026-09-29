@@ -15,6 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from config import OUTPUT_DIR                          # noqa: E402
+from src import knowledge                              # noqa: E402
 from src import pm_check, pm_com, pm_holder            # noqa: E402
 from src.applog import start_log                        # noqa: E402
 from src.console import Wizard, read_line               # noqa: E402
@@ -267,6 +268,15 @@ def main() -> int:
     print("\n".join(summary))
     print()
     print(f"  Отчёт: {REPORT_FILE} (открывается пунктом 29 меню)")
+
+    # Урок — если PowerMill нашёл замечания или отчёт не пришёл (иначе не пристаём).
+    problems = [line.strip() for line in summary if "✘" in line]
+    if not got:
+        problems.append("макрос не оставил отчёт — проверки до конца не прошли")
+    if problems:
+        knowledge.ask_lesson(problems,
+                             task="проверки траекторий: " + ", ".join(chosen),
+                             source="check_toolpaths", reader=read_line)
     return 0
 
 

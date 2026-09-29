@@ -801,7 +801,7 @@ def test_menu_knows_points_44_and_45():
     """MCP: подключение к ИИ-клиенту и проверка сервера."""
     text = (Path(__file__).resolve().parent.parent
             / "start_menu.bat").read_text(encoding="utf-8", errors="replace")
-    assert "Выбор (0-47)" in text
+    assert "Выбор (0-48)" in text
     assert "44  -  Подключить ИИ-клиент по MCP" in text
     assert "45  -  Проверить MCP-сервер" in text
     assert ':mcp' in text and ':mcpserver' in text

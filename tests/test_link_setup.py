@@ -179,7 +179,7 @@ def test_bat_is_double_clickable_and_mentions_the_chain():
 
 def test_menu_has_point_47():
     text = (PROJECT_ROOT / "start_menu.bat").read_text(encoding="utf-8", errors="replace")
-    assert "Выбор (0-47)" in text
+    assert "Выбор (0-48)" in text
     assert '"%choice%"=="47" goto linksetup' in text
     assert "scripts\\link_setup.bat" in text
     assert "47  -  Связка с PowerMill" in text

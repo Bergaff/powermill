@@ -77,12 +77,15 @@ echo     46  -  Расходы на ИИ и лимиты (облачный API)
 echo.
 echo     47  -  Связка с PowerMill: мост -^> макросы -^> проверка делом
 echo.
+echo    ОБУЧЕНИЕ (знания о твоей работе)
+echo     48  -  Чему учить ассистента: правила и уроки
+echo.
 echo      0  -  Выход
 echo.
 echo   Внутри любых экранов слово  «назад»  или  «меню»
 echo   возвращает к этому списку.
 echo.
-set /p choice="   Выбор (0-47): "
+set /p choice="   Выбор (0-48): "
 
 if "%choice%"=="1"  goto chat
 if "%choice%"=="2"  goto search
@@ -131,6 +134,7 @@ if "%choice%"=="44" goto mcp
 if "%choice%"=="45" goto mcpserver
 if "%choice%"=="46" goto spend
 if "%choice%"=="47" goto linksetup
+if "%choice%"=="48" goto knowledge
 if "%choice%"=="0"  exit /b 0
 if /i "%choice%"=="назад" exit /b 0
 if /i "%choice%"=="меню" goto menu
@@ -262,6 +266,10 @@ goto menu
 
 :link
 call "%~dp0scripts\check_link.bat"
+goto menu
+
+:knowledge
+call "%~dp0scripts\knowledge.bat"
 goto menu
 
 :folder

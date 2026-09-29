@@ -197,13 +197,27 @@ def _friendly_error(status: int, body: str) -> str:
     return f"❌ Ошибка API ({status}). {hint}\n   Ответ: {snippet}"
 
 
+LOCAL_ONLY_REFUSAL = (
+    "❌ В этот ответ входят твои данные (правила, уроки или имена объектов "
+    "проекта), а облачный ИИ для них отключён — так решено в настройках "
+    "обучения.\n"
+    "   Что делать: поставить локальную модель (пункт 14 меню, Ollama) или "
+    "убрать часть правил из файла (пункт 48). В облако эти данные не уходят.")
+
+
 def chat(prompt: str, model: str = "", settings: dict | None = None,
          system: str = "", temperature: float | None = None,
-         max_tokens: int = 2048) -> str:
+         max_tokens: int = 2048, local_only: bool = False) -> str:
     """Один запрос к API. Возвращает текст ответа или понятное сообщение об ошибке.
 
     Никогда не бросает исключений — чат не должен падать из-за сети.
+
+    `local_only=True` — жёсткий запрет облака: даже если ключ настроен, запрос
+    наружу не уходит. Ставится, когда в промпте есть данные технолога (правила,
+    уроки, имена объектов проекта) — см. src/knowledge.py.
     """
+    if local_only:
+        return LOCAL_ONLY_REFUSAL
     settings = settings or load_settings()
     if not settings.get("base_url"):
         return ("❌ API не настроен: нет адреса сервиса.\n"
