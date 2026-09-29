@@ -10,7 +10,10 @@
 * никаких скобочных блоков `( ... )` с русским текстом — под chcp 65001 они
   закрывали окно у пользователя (пункты 4/5 меню);
 * все `goto` имеют парные метки, а все `call` — существующие файлы;
-* меню вызывает только существующие батники, и его пункты идут подряд.
+* меню вызывает только существующие батники, и его пункты идут подряд;
+* в `echo` нет одиночных `>` и `<` — cmd понимает их как перенаправление и
+  вместо строки меню создаёт мусорный файл.
+
 """
 from __future__ import annotations
 
@@ -54,6 +57,29 @@ def test_no_bom(path: Path):
 def test_has_chcp(path: Path):
     text = path.read_text(encoding="utf-8", errors="replace")
     assert "chcp" in text.lower(), f"{path.name}: нет chcp 65001"
+
+
+@pytest.mark.parametrize("path", BATS, ids=lambda p: p.name)
+def test_echo_has_no_unescaped_redirects(path: Path):
+    """`echo ... -> ...` в cmd — это перенаправление в файл, а не стрелка.
+
+    Так у пункта 37 меню появлялся мусорный файл с именем
+    «выполнение -> проверки -> NC (шаг 3.6)», а строка меню обрывалась.
+    Стрелка пишется `-^>`; `>nul` и `2>&1` — законные перенаправления.
+    """
+    text = path.read_text(encoding="utf-8", errors="replace")
+    problems = []
+    for number, line in enumerate(text.splitlines(), start=1):
+        stripped = line.strip().lower()
+        if not stripped.startswith(("echo", "@echo")):
+            continue
+        body = re.sub(r"\d?>&\d", "", line)          # 2>&1 — это норма
+        body = re.sub(r">\s*nul", "", body, flags=re.IGNORECASE)
+        body = body.replace("^>", "").replace("^<", "")
+        if ">" in body or "<" in body:
+            problems.append(f"  строка {number}: {line.strip()}")
+    assert not problems, (f"{path.name}: в echo есть перенаправление вместо "
+                          f"текста (пиши -^>):\n" + "\n".join(problems))
 
 
 @pytest.mark.parametrize("path", BATS, ids=lambda p: p.name)
