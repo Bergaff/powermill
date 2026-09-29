@@ -127,57 +127,53 @@ def _num(value: float) -> str:
     return f"{value:g}"
 
 
-def build_macro(plan: OperationPlan, result_file: Path | str = RESULT_FILE,
-                stamp: str | None = None) -> str:
-    """Текст PML-макроса, который собирает операцию и пишет отчёт о шагах."""
-    out_file = str(result_file).replace("\\", "/")
-    when = stamp or time.strftime("%Y-%m-%d %H:%M:%S")
+@dataclass
+class MacroPart:
+    """Одна порция работы для PowerMill, которую выполняем отдельным макросом.
 
-    lines: list[str] = [
-        "// ============================================================",
-        "//  PowerMill AI — черновая операция (шаги 3.2–3.3)",
-        f"//  Собрано: {when}",
-        "//  Меняет проект: создаёт инструмент (если нет), сбрасывает заготовку,",
-        "//  создаёт траекторию из шаблона и выставляет параметры и режимы.",
-        "//  Запускать на КОПИИ проекта и после подтверждения.",
-        "// ============================================================",
-        "",
-        "RESET LOCALVARS",
-        "",
-        f"STRING $pm_res = '{out_file}'",
-        "FILE OPEN $pm_res FOR WRITE AS out",
-        'STRING $pm_tag = "PM_OPERATION_RESULT"',
-        "FILE WRITE $pm_tag TO out",
-        "",
-        'STRING $pm_head = "PowerMill AI: собираю операцию " + "'
-        + plan.toolpath_name + '"',
-        "PRINT $pm_head",
-        "",
-        "// ---------- 1. Инструмент ----------",
-        "EDIT TPPAGE TOOL",
-    ]
+    Зачем части, а не один большой макрос: PowerMill **останавливает макрос на
+    первой неверной строке**, и всё, что было после неё, теряется. Так у пункта 37
+    пропала вся операция из-за одной строки с размерами заготовки. Части идут по
+    очереди, после каждой проверяется её файл-отметка — поэтому видно, на чём
+    именно споткнулись, а сделанное до этого в проекте остаётся.
+    """
 
+    key: str
+    title: str
+    markers: tuple[str, ...]        # шаги, которые эта часть пишет в отчёт
+    lines: list[str]
+
+    def text(self) -> str:
+        return "\n".join(self.lines)
+
+
+def build_parts(plan: OperationPlan) -> list[MacroPart]:
+    """Порции макроса операции по порядку: инструмент → заготовка → ... → расчёт."""
+    parts: list[MacroPart] = []
+
+    # ---------- 1. Инструмент ----------
+    tool_lines = ["// ---------- 1. Инструмент ----------", "EDIT TPPAGE TOOL"]
     if plan.create_tool:
-        lines += [
-            f"INT $pm_tools0 = SIZE(folder('Tool'))",
+        tool_lines += [
+            "INT $pm_tools0 = SIZE(folder('Tool'))",
             f'STRING $pm_step1 = "{STEP_MARK}tool;start;было инструментов: " + STRING($pm_tools0)',
             "FILE WRITE $pm_step1 TO out",
             "PRINT $pm_step1",
         ]
         for index, word in enumerate(tool_words()):
-            lines += [
-                f"IF SIZE(folder('Tool')) == $pm_tools0 {{",
+            tool_lines += [
+                "IF SIZE(folder('Tool')) == $pm_tools0 {",
                 f"    CREATE TOOL ; {word}",
-                f"    STRING $pm_try{index} = \"{STEP_MARK}tool_create;try;{word};\" + "
+                f'    STRING $pm_try{index} = "{STEP_MARK}tool_create;try;{word};" + '
                 "STRING(SIZE(folder('Tool')))",
                 f"    FILE WRITE $pm_try{index} TO out",
                 f"    PRINT $pm_try{index}",
                 "}",
             ]
-        lines += [
+        tool_lines += [
             "INT $pm_tools1 = SIZE(folder('Tool'))",
             f'STRING $pm_step2 = "{STEP_MARK}tool_create;" + '
-            'STRING($pm_tools1 != $pm_tools0) + ";" + STRING($pm_tools1)',
+            "STRING($pm_tools1 != $pm_tools0) + \";\" + STRING($pm_tools1)",
             "FILE WRITE $pm_step2 TO out",
             "PRINT $pm_step2",
             "IF $pm_tools1 == $pm_tools0 {",
@@ -195,16 +191,18 @@ def build_macro(plan: OperationPlan, result_file: Path | str = RESULT_FILE,
             "}",
         ]
     else:
-        lines += [
+        tool_lines += [
             f"ACTIVATE TOOL '{plan.tool_name}'",
             f'STRING $pm_tool_act = "{STEP_MARK}tool_active;" + $Tool.Name + ";" + '
             "STRING($Tool.Diameter)",
             "FILE WRITE $pm_tool_act TO out",
             "PRINT $pm_tool_act",
         ]
+    parts.append(MacroPart("tool", "Инструмент", ("tool_create", "tool_name",
+                                                  "tool_active"), tool_lines))
 
-    lines += [
-        "",
+    # ---------- 2. Заготовка ----------
+    block_lines = [
         "// ---------- 2. Заготовка (Block) по модели ----------",
         "EDIT TPPAGE SWBlock",
         "EDIT BLOCK COORDINATE WORLD",
@@ -212,19 +210,25 @@ def build_macro(plan: OperationPlan, result_file: Path | str = RESULT_FILE,
         f'EDIT BLOCK RESETLIMIT "{_num(plan.tolerance)}"',
     ]
     if plan.block_z_max is not None:
-        lines.append(f'EDIT BLOCK ZMAX "{_num(plan.block_z_max)}"')
-    lines += [
-        f'STRING $pm_block = "{STEP_MARK}block;ok;" + STRING($Block.XLength) + ";" + '
-        "STRING($Block.YLength) + \";\" + STRING($Block.ZLength)",
+        block_lines.append(f'EDIT BLOCK ZMAX "{_num(plan.block_z_max)}"')
+    block_lines += [
+        # Размеры блока здесь НЕ читаем: свойства $Block.XLength не существует
+        # (на живом PowerMill это останавливало весь макрос). Размеры — в
+        # последней части, чтобы ошибка чтения ничего не стоила.
+        f'STRING $pm_block = "{STEP_MARK}block;ok;заготовка сброшена по модели"',
         "FILE WRITE $pm_block TO out",
         "PRINT $pm_block",
-        "",
+    ]
+    parts.append(MacroPart("block", "Заготовка (Block)", ("block",), block_lines))
+
+    # ---------- 3. Траектория из шаблона + параметры ----------
+    toolpath_lines = [
         "// ---------- 3. Траектория из шаблона стратегии ----------",
         "INT $pm_tp_before = SIZE(folder('Toolpath'))",
         f'IMPORT TEMPLATE ENTITY TOOLPATH TMPLTSELECTORGUI "{plan.template}"',
         "INT $pm_tp_after = SIZE(folder('Toolpath'))",
         f'STRING $pm_tp_new = "{STEP_MARK}toolpath;" + STRING($pm_tp_after) + ";" + '
-        'STRING($pm_tp_after != $pm_tp_before)',
+        "STRING($pm_tp_after != $pm_tp_before)",
         "FILE WRITE $pm_tp_new TO out",
         "PRINT $pm_tp_new",
         "",
@@ -235,16 +239,17 @@ def build_macro(plan: OperationPlan, result_file: Path | str = RESULT_FILE,
         f'EDIT PAR \'Thickness\' "{_num(plan.thickness)}"',
     ]
     if plan.stepover is not None:
-        lines.append(f"EDIT PAR 'Stepover' {_num(plan.stepover)}")
+        toolpath_lines.append(f"EDIT PAR 'Stepover' {_num(plan.stepover)}")
     if plan.stepdown is not None:
-        lines.append(f"EDIT PAR 'AreaClearance.ZHeights.Stepdown' {_num(plan.stepdown)}")
-    lines += [
+        toolpath_lines.append(
+            f"EDIT PAR 'AreaClearance.ZHeights.Stepdown' {_num(plan.stepdown)}")
+    toolpath_lines += [
         "EDIT TPPAGE SWLimit",
         f'EDIT PAR \'ZRange.Minimum.Active\' {"1" if plan.z_min is not None else "0"}',
     ]
     if plan.z_min is not None:
-        lines.append(f"EDIT PAR 'ZRange.Minimum.Value' {_num(plan.z_min)}")
-    lines += [
+        toolpath_lines.append(f"EDIT PAR 'ZRange.Minimum.Value' {_num(plan.z_min)}")
+    toolpath_lines += [
         "EDIT TPPAGE SWToolRapidMv",
         "EDIT TOOLPATH SAFEAREA CALCULATE_DIMENSIONS",
         "EDIT TPPAGE SWLeadsLinks",
@@ -257,59 +262,164 @@ def build_macro(plan: OperationPlan, result_file: Path | str = RESULT_FILE,
         "FILE WRITE $pm_params TO out",
         "PRINT $pm_params",
     ]
+    parts.append(MacroPart("toolpath", "Траектория и параметры",
+                           ("toolpath", "params"), toolpath_lines))
 
+    # ---------- 4. Режимы и имя траектории ----------
+    feeds_lines = ["// ---------- 5. Режимы резания ----------"]
     if plan.rpm or plan.feed or plan.plunge:
-        lines += [
-            "",
-            "// ---------- 5. Режимы резания ----------",
-            "EDIT TPPAGE SWFeedSpeed",
-        ]
+        feeds_lines.append("EDIT TPPAGE SWFeedSpeed")
         if plan.rpm:
-            lines.append(f'EDIT RPM "{plan.rpm}"')
+            feeds_lines.append(f'EDIT RPM "{plan.rpm}"')
         if plan.feed:
-            lines.append(f'EDIT FRATE "{plan.feed}"')
+            feeds_lines.append(f'EDIT FRATE "{plan.feed}"')
         if plan.plunge:
-            lines.append(f'EDIT PRATE "{plan.plunge}"')
-        lines += [
+            feeds_lines.append(f'EDIT PRATE "{plan.plunge}"')
+        feeds_lines += [
             f'STRING $pm_feed = "{STEP_MARK}feeds;ok;" + '
-            'STRING($toolpath.SpindleSpeed.Value) + ";" + '
-            'STRING($toolpath.Feedrate.Cutting.Value)',
+            "STRING($toolpath.SpindleSpeed.Value) + \";\" + "
+            "STRING($toolpath.Feedrate.Cutting.Value)",
             "FILE WRITE $pm_feed TO out",
             "PRINT $pm_feed",
         ]
-
-    lines += [
+    feeds_lines += [
         "",
-        "// ---------- 6. Имя траектории и (по желанию) расчёт ----------",
+        "// ---------- 6. Имя траектории ----------",
         f"RENAME TOOLPATH ; '{plan.toolpath_name}'",
         f'STRING $pm_name = "{STEP_MARK}rename;ok;{plan.toolpath_name}"',
         "FILE WRITE $pm_name TO out",
         "PRINT $pm_name",
     ]
+    parts.append(MacroPart("feeds", "Режимы и имя траектории", ("feeds", "rename"),
+                           feeds_lines))
+
+    # ---------- 5. Расчёт ----------
     if plan.calculate:
-        lines += [
+        calc_lines = [
+            "// ---------- 7. Расчёт траектории ----------",
             f'EDIT TOOLPATH "{plan.toolpath_name}" CALCULATE',
             f'STRING $pm_calc = "{STEP_MARK}calculate;ok;{plan.toolpath_name}"',
             "FILE WRITE $pm_calc TO out",
             "PRINT $pm_calc",
         ]
     else:
-        lines += [
+        calc_lines = [
+            "// ---------- 7. Расчёт траектории ----------",
             f'STRING $pm_calc = "{STEP_MARK}calculate;skip;ты не подтверждал расчёт"',
             "FILE WRITE $pm_calc TO out",
             "PRINT $pm_calc",
         ]
+    parts.append(MacroPart("calculate", "Расчёт траектории", ("calculate",), calc_lines))
 
+    # ---------- 6. Размеры заготовки: в самом конце ----------
+    # Здесь читаются свойства объекта Block. Форма `$Block.Limits.XMax` взята из
+    # рабочих макросов Autodesk (`$Block.XLength` не существует и роняет макрос),
+    # но проверена она ещё не на всех версиях — поэтому это последняя часть:
+    # если чтение не удастся, всё остальное уже сделано.
+    parts.append(MacroPart(
+        "block_size", "Размеры заготовки (для отчёта)", ("block_size",),
+        [
+            "// ---------- 8. Размеры заготовки (только для отчёта) ----------",
+            f'STRING $pm_bsize = "{STEP_MARK}block_size;ok;" + '
+            "STRING($Block.Limits.XMax - $Block.Limits.XMin) + \";\" + "
+            "STRING($Block.Limits.YMax - $Block.Limits.YMin) + \";\" + "
+            "STRING($Block.Limits.ZMax - $Block.Limits.ZMin)",
+            "FILE WRITE $pm_bsize TO out",
+            "PRINT $pm_bsize",
+        ]))
+    return parts
+
+
+def _header_lines(plan: OperationPlan, when: str) -> list[str]:
+    return [
+        "// ============================================================",
+        "//  PowerMill AI — черновая операция (шаги 3.2–3.3)",
+        f"//  Собрано: {when}",
+        "//  Меняет проект: создаёт инструмент (если нет), сбрасывает заготовку,",
+        "//  создаёт траекторию из шаблона и выставляет параметры и режимы.",
+        "//  Запускать на КОПИИ проекта и после подтверждения.",
+        "// ============================================================",
+        "",
+        "RESET LOCALVARS",
+        "",
+    ]
+
+
+def build_macro(plan: OperationPlan, result_file: Path | str = RESULT_FILE,
+                stamp: str | None = None) -> str:
+    """Весь макрос операции одним текстом (для ручного запуска в PowerMill)."""
+    out_file = str(result_file).replace("\\", "/")
+    when = stamp or time.strftime("%Y-%m-%d %H:%M:%S")
+
+    lines = _header_lines(plan, when) + [
+        f"STRING $pm_res = '{out_file}'",
+        "FILE OPEN $pm_res FOR WRITE AS out",
+        'STRING $pm_tag = "PM_OPERATION_RESULT"',
+        "FILE WRITE $pm_tag TO out",
+        "",
+        f'STRING $pm_head = "PowerMill AI: собираю операцию " + "'
+        + plan.toolpath_name + '"',
+        "PRINT $pm_head",
+    ]
+    for part in build_parts(plan):
+        lines += ["", f"// --- часть: {part.title} ---"] + part.lines
     lines += [
         "",
         "FILE CLOSE out",
-        f'STRING $pm_done = "PowerMill AI: операция "{plan.toolpath_name}'
-        '" собрана. Отчёт: " + $pm_res',
+        f'STRING $pm_done = "PowerMill AI: операция {plan.toolpath_name} '
+        'собрана. Отчёт: " + $pm_res',
         "PRINT $pm_done",
         "MESSAGE INFO $pm_done",
         "",
     ]
     return "\n".join(lines)
+
+
+def write_parts(plan: OperationPlan, folder: Path | str | None = None,
+                prefix: str = "pm_operation",
+                result_file: Path | str = RESULT_FILE,
+                stamp: str | None = None) -> list[tuple[MacroPart, Path]]:
+    """Пишет каждую часть отдельным макросом — их PowerMill выполняет по очереди.
+
+    Каждый файл самодостаточен: `RESET LOCALVARS` (переменные не переживают
+    выполнение макроса), открытие файла отчёта — первый на запись, остальные на
+    дозапись. Поэтому падение одной части не мешает посмотреть отчёт предыдущих.
+    Модального окна («готово») здесь нет: поток сразу идёт дальше, на проверки.
+    """
+    target_dir = Path(folder) if folder else OUTPUT_DIR
+    target_dir.mkdir(parents=True, exist_ok=True)
+    out_file = str(result_file).replace("\\", "/")
+    when = stamp or time.strftime("%Y-%m-%d %H:%M:%S")
+
+    parts = build_parts(plan)
+    written: list[tuple[MacroPart, Path]] = []
+    for index, part in enumerate(parts, start=1):
+        lines = _header_lines(plan, when) + [
+            f"//  Часть {index} из {len(parts)}: {part.title}",
+            "// ============================================================",
+            "",
+            f"STRING $pm_res = '{out_file}'",
+            f"FILE OPEN $pm_res FOR {'WRITE' if index == 1 else 'APPEND'} AS out",
+        ]
+        if index == 1:
+            lines += [
+                'STRING $pm_tag = "PM_OPERATION_RESULT"',
+                "FILE WRITE $pm_tag TO out",
+                f'STRING $pm_head = "PowerMill AI: собираю операцию " + "'
+                + plan.toolpath_name + '"',
+                "PRINT $pm_head",
+            ]
+        lines += [""] + part.lines + ["", "FILE CLOSE out", ""]
+        if index == len(parts):
+            lines += [
+                f'STRING $pm_done = "PowerMill AI: операция {plan.toolpath_name} '
+                'собрана (по частям). Отчёт: " + $pm_res',
+                "PRINT $pm_done",
+            ]
+        path = target_dir / f"{prefix}_{index}_{part.key}.mac"
+        pml_files.write(path, "\n".join(lines))
+        written.append((part, path))
+    return written
 
 
 def preview(plan: OperationPlan) -> list[str]:
@@ -371,6 +481,7 @@ STEP_TITLES = {
     "tool_name": "Параметры инструмента",
     "tool_active": "Выбор инструмента из проекта",
     "block": "Заготовка (Block)",
+    "block_size": "Размеры заготовки",
     "toolpath": "Траектория из шаблона",
     "params": "Параметры стратегии",
     "feeds": "Режимы резания",
@@ -408,9 +519,14 @@ def format_result(steps: list[tuple[str, str, str]]) -> str:
     return "\n".join(lines)
 
 
-def last_result(path: Path | str = RESULT_FILE) -> tuple[list[tuple[str, str, str]], str]:
-    """Читает отчёт макроса: (шаги, пояснение)."""
-    file = Path(path)
+def last_result(path: Path | str | None = None
+                ) -> tuple[list[tuple[str, str, str]], str]:
+    """Читает отчёт макроса: (шаги, пояснение).
+
+    Путь берётся в момент вызова: так тесты (и смена папки данных) могут
+    подменить `RESULT_FILE`, а не получить путь, «зашитый» при импорте модуля.
+    """
+    file = Path(path) if path else RESULT_FILE
     if not file.exists():
         return [], f"файла ещё нет ({file})"
     steps = parse_result(pml_files.read(file))

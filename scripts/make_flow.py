@@ -187,31 +187,59 @@ def main() -> int:
         print(f"  ✔ Копия проекта: {copy_path}")
 
     # ---------------- 1. операция (3.1–3.3) ----------------
+    # Выполняем ЧАСТЯМИ, а не одним макросом: PowerMill останавливает макрос на
+    # первой неверной строке, и одним файлом мы теряли всю операцию сразу.
     macro = pm_flow.operation_macro(plan)
-    print(f"  Макрос операции: {macro}")
-    before = time.time()
-    ok, note = run_macro(macro)
-    if not ok:
-        report.add("Запуск макроса операции", "fail", note or "PowerMill не принял команду")
-        report.warnings.append("Запусти макрос вручную: вкладка «Макрос» -> "
-                               "Выполнить -> pm_flow.mac и пришли отчёт.")
-        pm_flow.save_report(report)
-        print(report.format())
-        return 1
-
-    print("  Жду отчёт макроса (до 2 минут)…")
-    got = wait_for(pm_operation.RESULT_FILE, before, timeout=120)
-    steps_result, _note = pm_operation.last_result()
+    print(f"  Макрос операции целиком (на случай ручного запуска): {macro}")
+    print("  Выполняю по частям — если на чём-то споткнёмся, остальное уцелеет.")
     print()
-    print(pm_operation.format_result(steps_result))
+    parts = pm_flow.operation_parts(plan)
+    steps_result: list[tuple[str, str, str]] = []
+    for index, (part, part_path) in enumerate(parts, start=1):
+        print(f"  [{index}/{len(parts)}] {part.title} …")
+        if part.key == "toolpath":
+            print("        Если PowerMill откроет окно выбора шаблона — выбери")
+            print("        3D-Area-Clearance -> Model-Area-Clearance и «Применить».")
+        before = time.time()
+        ok, note = run_macro(part_path)
+        if not ok:
+            report.add(f"Операция: {part.title}", "fail",
+                       note or "PowerMill не принял команду")
+            report.warnings.append("Часть не запустилась. Отчёт макроса операции "
+                                   "и этот файл можно прислать в чат.")
+            print()
+            print(f"  ✘ {part.title}: PowerMill не принял команду ({note})")
+            print(f"  Отчёт: {pm_flow.save_report(report)} (пункт 29 меню)")
+            return 1
+        if not pm_flow.wait_for_part(part, before):
+            report.add(f"Операция: {part.title}", "fail",
+                       "PowerMill не дошёл до конца этой части")
+            report.warnings.append(
+                f"Остановились на части «{part.title}» — посмотри окно сообщений "
+                f"PowerMill (там строка с ошибкой) и пришли отчёт. Файл этой части: "
+                f"{part_path}")
+            print()
+            print(pm_operation.format_result(pm_operation.last_result()[0]))
+            print()
+            print(f"  ✘ PowerMill не дошёл до конца части «{part.title}».")
+            print("     Смотри окно сообщений самого PowerMill: там строка с ошибкой.")
+            print(f"     Файл этой части: {part_path}")
+            print(f"  Отчёт: {pm_flow.save_report(report)} (пункт 29 меню)")
+            return 1
+        steps_result, _note = pm_operation.last_result()
+        part_steps = [item for item in steps_result if item[0] in part.markers]
+        for line in pm_operation.format_result(part_steps).splitlines():
+            print("      " + line.strip())
+    print()
+    print("  Итог по операции — по шагам выше. Что не прошло, будет видно в отчёте.")
     print()
     for step, status, detail in steps_result:
         report.add(f"Операция: {pm_operation.STEP_TITLES.get(step, step)}", status, detail)
 
     failed = [step for step, status, _ in steps_result if status == "fail"]
-    if not got or failed:
-        report.warnings.append("Макрос операции не дошёл до конца или не записал "
-                               "отчёт — проверь строки с ✘ и пришли отчёт.")
+    if failed:
+        report.warnings.append("В отчёте макроса есть строки с ✘ — проверь их "
+                               "и пришли этот отчёт.")
         pm_flow.save_report(report)
         print()
         print(f"  Отчёт: {pm_flow.save_report(report)} (пункт 29 меню)")

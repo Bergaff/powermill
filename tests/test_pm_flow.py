@@ -168,3 +168,64 @@ def test_summarize_operation_reuses_point31_format():
     steps = pm_operation.parse_result("STEP;tool;ok;фреза создана\n")
     text = "\n".join(pm_flow.summarize_operation(steps))
     assert "Инструмент" in text
+
+
+# --------------------------------------------------------------------------
+# Части операции: поток идёт по очереди и знает, где остановился
+# --------------------------------------------------------------------------
+def test_operation_parts_are_written_for_the_flow(tmp_path, monkeypatch):
+    monkeypatch.setattr(pm_flow, "OUTPUT_DIR", tmp_path)
+    plan, _lines = pm_flow.build_plan(request())
+    written = pm_flow.operation_parts(plan)
+    assert [part.key for part, _path in written] == [
+        "tool", "block", "toolpath", "feeds", "calculate", "block_size"]
+    for _part, path in written:
+        assert path.exists() and path.parent == tmp_path
+        assert path.name.startswith("pm_flow_")
+
+
+def test_every_part_has_its_own_timeout(tmp_path, monkeypatch):
+    """У каждой части свой срок ожидания — окно шаблона и расчёт идут долго."""
+    for create_tool in (True, False):
+        keys = {part.key for part in pm_operation.build_parts(
+            pm_flow.build_plan(request(tool_from_project=not create_tool))[0])}
+        assert keys <= set(pm_flow.PART_TIMEOUTS)
+    assert pm_flow.PART_TIMEOUTS["calculate"] > pm_flow.PART_TIMEOUTS["block"]
+
+
+def test_wait_for_part_sees_the_step_in_the_report(tmp_path, monkeypatch):
+    result = tmp_path / "result.txt"
+    monkeypatch.setattr(pm_operation, "RESULT_FILE", result)
+    part = pm_operation.MacroPart("block", "Заготовка", ("block",), [])
+    result.write_text("STEP;tool;ok;фреза\n", encoding="utf-8")
+    assert pm_flow.part_finished(part) is False
+    assert pm_flow.wait_for_part(part, 0.0, timeout=0.2) is False
+
+    result.write_text("STEP;tool;ok;фреза\nSTEP;block;ok;заготовка\n", encoding="utf-8")
+    assert pm_flow.part_finished(part) is True
+    assert pm_flow.wait_for_part(part, 0.0, timeout=1.0) is True
+
+
+def test_stale_report_does_not_count_as_finished(tmp_path, monkeypatch):
+    """Отчёт от прошлого запуска не должен выглядеть как «часть прошла»."""
+    result = tmp_path / "result.txt"
+    result.write_text("STEP;block;ok;прошлый раз\n", encoding="utf-8")
+    old = result.stat().st_mtime - 600
+    import os
+
+    os.utime(result, (old, old))
+    monkeypatch.setattr(pm_operation, "RESULT_FILE", result)
+    part = pm_operation.MacroPart("block", "Заготовка", ("block",), [])
+    # before — момент отправки части в PowerMill: отчёт старше него не считается
+    assert pm_flow.wait_for_part(part, __import__("time").time(), timeout=0.2) is False
+
+
+def test_flow_stops_and_names_the_failed_part():
+    """Пункт 37 обязан сказать, НА КАКОЙ части встал, а не «что-то не так»."""
+    text = Path(__file__).resolve().parent.parent.joinpath(
+        "scripts", "make_flow.py").read_text(encoding="utf-8")
+    assert "pm_flow.operation_parts(plan)" in text
+    assert "wait_for_part" in text
+    assert "не дошёл до конца части" in text
+    assert "окно сообщений самого PowerMill" in text
+    assert "остальное уцелеет" in text

@@ -179,3 +179,72 @@ def test_skip_status_is_not_error():
     text = pm_operation.format_result([("calculate", "skip", "ты не подтверждал расчёт")])
     assert "•" in text
     assert "пришли этот отчёт" not in text
+
+
+# --------------------------------------------------------------------------
+# Части макроса: одна неудачная строка не должна стоить всей операции
+# --------------------------------------------------------------------------
+def test_no_unverified_block_properties():
+    """`$Block.XLength` не существует — эта строка останавливала весь макрос.
+
+    Свойства заготовки в PowerMill — только через Limits (проверено по рабочим
+    макросам Autodesk). И читаются они в САМОЙ ПОСЛЕДНЕЙ части: если версия
+    PowerMill их не поймёт, инструмент, заготовка, траектория и расчёт уже
+    сделаны.
+    """
+    for plan in (make_plan(), make_plan(create_tool=False, calculate=False)):
+        text = pm_operation.build_macro(plan)
+        assert "XLength" not in text and "YLength" not in text and "ZLength" not in text
+        assert "$Block.Limits.XMax" in text
+        parts = pm_operation.build_parts(plan)
+        assert parts[-1].key == "block_size"
+        # в самой части заготовки свойств блока нет — только команды
+        block_part = next(part for part in parts if part.key == "block")
+        assert "$Block" not in block_part.text()
+
+
+def test_part_order_is_the_working_order():
+    keys = [part.key for part in pm_operation.build_parts(make_plan())]
+    assert keys == ["tool", "block", "toolpath", "feeds", "calculate", "block_size"]
+
+
+def test_every_step_of_the_macro_belongs_to_a_part():
+    """Каждый шаг отчёта пишет какая-то часть — иначе поток её не дождётся."""
+    plan = make_plan()
+    steps = pm_operation.parse_result(pm_operation.build_macro(plan))
+    markers = {name for part in pm_operation.build_parts(plan) for name in part.markers}
+    missing = {step for step, _status, _detail in steps} - markers
+    assert not missing, f"шаги без своей части: {sorted(missing)}"
+
+
+def test_each_part_is_a_standalone_macro(tmp_path):
+    """Каждую часть PowerMill выполняет отдельным макросом — она самодостаточна."""
+    written = pm_operation.write_parts(make_plan(), folder=tmp_path, prefix="pm_flow")
+    assert len(written) == 6
+    for index, (part, path) in enumerate(written, start=1):
+        text = path.read_text(encoding="cp1251")
+        assert path.name == f"pm_flow_{index}_{part.key}.mac"
+        assert "RESET LOCALVARS" in text                  # переменные не переживают макрос
+        assert "FILE CLOSE out" in text
+        assert "MESSAGE INFO" not in text                 # поток идёт дальше, окно не ждём
+        if index == 1:
+            assert "FILE OPEN $pm_res FOR WRITE AS out" in text
+        else:
+            assert "FILE OPEN $pm_res FOR APPEND AS out" in text
+        for line in part.lines:
+            assert line in text, f"{part.key}: потерялась строка {line!r}"
+    assert "PRINT $pm_done" in written[-1][1].read_text(encoding="cp1251")
+
+
+def test_written_parts_are_windows_style(tmp_path):
+    """PowerMill читает макросы с переводами строк CRLF (иначе рвёт строки)."""
+    written = pm_operation.write_parts(make_plan(), folder=tmp_path)
+    for _part, path in written:
+        raw = path.read_bytes()
+        assert raw.count(b"\n") == raw.count(b"\r\n"), f"{path.name}: есть LF без CR"
+
+
+def test_parts_still_pass_the_vocabulary_validator():
+    for part in pm_operation.build_parts(make_plan()):
+        report = pml_vocab.validate(part.text(), VOCAB)
+        assert report["ok"], f"{part.key}: " + pml_vocab.format_check(report)

@@ -226,8 +226,52 @@ def save_report(report: FlowReport) -> Path:
 # Выполнение (шаги выполняет сценарий, модуль собирает и разбирает)
 # --------------------------------------------------------------------------
 def operation_macro(plan: pm_operation.OperationPlan) -> Path:
-    """Пишет макрос операции (шаги 3.1–3.3) — его запускает PowerMill."""
+    """Пишет макрос операции целиком (шаги 3.1–3.3) — для ручного запуска."""
     return pm_operation.write_macro(plan, path=FLOW_MACRO)
+
+
+# Сколько ждём каждую часть макроса. Разное не от лени: в части с траекторией
+# PowerMill может открыть окно выбора шаблона и ждать человека, а расчёт
+# траектории на большой детали идёт минутами.
+PART_TIMEOUTS = {
+    "tool": 90.0,
+    "block": 90.0,
+    "toolpath": 300.0,
+    "feeds": 90.0,
+    "calculate": 900.0,
+    "block_size": 60.0,
+}
+
+
+def operation_parts(plan: pm_operation.OperationPlan
+                    ) -> list[tuple[pm_operation.MacroPart, Path]]:
+    """Части макроса операции отдельными файлами: их выполняем по очереди.
+
+    Так делает пункт 33 с инструментом: одна неудачная строка стоит только
+    своей части, а не всей операции — и в отчёте видно, на чём остановились.
+    """
+    return pm_operation.write_parts(plan, folder=OUTPUT_DIR, prefix="pm_flow")
+
+
+def part_finished(part: pm_operation.MacroPart) -> bool:
+    """Записала ли эта часть свой шаг в отчёт макроса."""
+    steps, _note = pm_operation.last_result(pm_operation.RESULT_FILE)
+    return any(step in part.markers for step, _status, _detail in steps)
+
+
+def wait_for_part(part: pm_operation.MacroPart, before: float,
+                  timeout: float | None = None) -> bool:
+    """Ждём, что PowerMill дошёл до конца этой части (появился её шаг в отчёте)."""
+    limit = PART_TIMEOUTS.get(part.key, 120.0) if timeout is None else timeout
+    deadline = time.time() + limit
+    while True:
+        if pm_operation.RESULT_FILE.exists():
+            fresh = pm_operation.RESULT_FILE.stat().st_mtime > before - 0.001
+            if fresh and part_finished(part):
+                return True
+        if time.time() >= deadline:
+            return False
+        time.sleep(0.5)
 
 
 def backup(project_folder: Path | str | None) -> Path | None:
