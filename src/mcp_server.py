@@ -152,6 +152,13 @@ def tool_status() -> str:
     lines.append("")
     lines.append("Полная проверка связи (с выполнением макроса внутри PowerMill) — "
                  "кнопка «Связь с PowerMill» в окне или пункт 41 меню.")
+    try:
+        from src import api_budget
+
+        lines.append("")
+        lines.extend(api_budget.summary_lines())
+    except Exception:                                         # noqa: BLE001
+        pass
     context = project_context.load()
     if context:
         try:
@@ -317,6 +324,19 @@ def tool_run_macro(name: str, confirm: bool = False) -> str:
             "Что изменилось — смотри отчёты (пункт 29) и проверки (пункт 35).")
 
 
+def tool_ai_spend() -> str:
+    """Сколько потрачено на облачный ИИ и какие стоят лимиты (пункт 46)."""
+    from src import api_budget
+
+    lines = api_budget.summary_lines()
+    lines.append("")
+    lines.append("Лимиты ставятся пунктом 46 меню (в окне — кнопка «Расходы на "
+                 "ИИ и лимиты»). Когда лимит исчерпан, запросы к платному "
+                 "сервису не уходят — можно переключиться на локальную модель "
+                 "(пункт 22).")
+    return "\n".join(lines)
+
+
 def tool_read_report(name: str = "doctor_report.txt") -> str:
     """Прочитать отчёт из папки данных (те, что видно в пункте 29 меню)."""
     import config
@@ -352,6 +372,7 @@ REPORTS: tuple[tuple[str, str], ...] = (
     ("install_packages_report.txt", "Библиотеки: что стоит (пункт 43)"),
     ("data_root_report.txt", "Смена папки данных (пункт 42)"),
     ("mcp_report.txt", "Подключение к ИИ-клиенту по MCP (пункт 44)"),
+    ("api_spend_report.txt", "Расходы на облачный ИИ и лимиты (пункт 46)"),
     ("install_report.txt", "Установка программы"),
     ("uninstall_report.txt", "Удаление программы"),
 )
@@ -497,6 +518,13 @@ def build_tools() -> list[ToolSpec]:
             }, ("name",)),
             lambda name, confirm=False: tool_run_macro(name, confirm),
             modifies_project=True,
+        ),
+        ToolSpec(
+            "powermill_ai_spend",
+            "Сколько потрачено на облачный ИИ (запросы, токены, примерная "
+            "стоимость) и какие стоят лимиты расходов.",
+            _schema(),
+            lambda: tool_ai_spend(),
         ),
         ToolSpec(
             "powermill_read_report",

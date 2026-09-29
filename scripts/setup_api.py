@@ -118,6 +118,34 @@ def main() -> int:
         print("   у провайдера нет доступа к модели. Запусти пункт 21 снова.")
     print()
     print(f"Файл настроек (в Git не попадает): {path}")
+    print("   В нём же лежат лимиты расходов — их правит пункт 46 меню.")
+    print()
+
+    # Про деньги говорим сразу: облачный ИИ платный, и человек должен знать,
+    # где стоят границы, а не узнавать об этом из счёта.
+    from src import api_budget
+
+    limits_now = api_budget.limits()
+    print("Лимиты расходов (по умолчанию скромные):")
+    print(f"  запросов в день:       {int(limits_now['daily_requests'])}")
+    print(f"  расход в день:         ${limits_now['daily_cost_usd']:.2f}")
+    print(f"  расход в месяц:        ${limits_now['monthly_cost_usd']:.2f}")
+    print(f"  токенов на один ответ: {int(limits_now['max_tokens_per_request'])}")
+    print()
+    print("Когда лимит исчерпан, запрос к платному сервису не уходит: приходит")
+    print("объяснение, а работу можно продолжить на локальной модели (пункт 22).")
+    print("Поменять лимиты: пункт 46 меню.")
+    print()
+
+    if read_line("  Настроить лимиты сейчас? [д/Н]: ").strip().lower() in ("д", "да", "y", "yes"):
+        from scripts.api_budget import set_limits
+
+        class _Args:                     # маленький «объект ключей» для set_limits
+            limit_requests = limit_daily_usd = limit_monthly_usd = None
+            max_tokens = price_input = price_output = None
+
+        print()
+        set_limits(_Args())
     return 0
 
 

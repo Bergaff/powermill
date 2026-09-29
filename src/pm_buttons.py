@@ -200,6 +200,18 @@ ACTIONS: tuple[Action, ...] = (
         asks=True,
         group=GROUP_SETUP,
     ),
+    Action(
+        key="spend",
+        label="Расходы на ИИ и лимиты",
+        hint="Сколько потрачено на облачный ИИ и где границы: запросы, деньги, "
+             "токены (пункт 46)",
+        kind="inline",
+        target="scripts.api_budget",
+        arguments="--show",
+        bat=r"scripts\api_budget.bat",
+        launcher="PM_AI_SPEND.mac",
+        group=GROUP_SETUP,
+    ),
     # --- без вопросов: результат идёт в журнал панели ---
     Action(
         key="chat",

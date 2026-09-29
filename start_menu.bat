@@ -73,12 +73,14 @@ echo.
 echo     44  -  Подключить ИИ-клиент по MCP (Claude, Cursor, VS Code)
 echo     45  -  Проверить MCP-сервер (что он умеет)
 echo.
+echo     46  -  Расходы на ИИ и лимиты (облачный API)
+echo.
 echo      0  -  Выход
 echo.
 echo   Внутри любых экранов слово  «назад»  или  «меню»
 echo   возвращает к этому списку.
 echo.
-set /p choice="   Выбор (0-45): "
+set /p choice="   Выбор (0-46): "
 
 if "%choice%"=="1"  goto chat
 if "%choice%"=="2"  goto search
@@ -125,6 +127,7 @@ if "%choice%"=="42" goto folder
 if "%choice%"=="43" goto deps
 if "%choice%"=="44" goto mcp
 if "%choice%"=="45" goto mcpserver
+if "%choice%"=="46" goto spend
 if "%choice%"=="0"  exit /b 0
 if /i "%choice%"=="назад" exit /b 0
 if /i "%choice%"=="меню" goto menu
@@ -272,6 +275,10 @@ goto menu
 
 :mcpserver
 call "%~dp0scripts\mcp_server.bat"
+goto menu
+
+:spend
+call "%~dp0scripts\api_budget.bat"
 goto menu
 
 :pmmacros

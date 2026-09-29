@@ -523,6 +523,12 @@ class PowerMillAI:
                          f"{fst['size_mb']} МБ ({fst['db']})")
         else:
             lines.append("🔎 FTS-индекс: не подключён")
+        try:
+            from src import api_budget
+
+            lines.extend(api_budget.summary_lines())
+        except Exception:                                     # noqa: BLE001
+            pass
         pages = Path(self.fts.pages_file).parent / "help_pages.jsonl" if self.fts else None
         if pages and pages.exists():
             size = pages.stat().st_size / 1e6

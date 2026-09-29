@@ -18,6 +18,11 @@
 3. Объясняет ошибки по-русски: нет ключа, неверный ключ (401), нет денег (402),
    лимит запросов (429), нет интернета, таймаут.
 4. `python -m src.llm --test` проверяет подключение и печатает ответ модели.
+5. **Считает расходы и держит лимиты** (`src\\api_budget.py`): запросов в день,
+   деньги в день и в месяц, потолок токенов на ответ. Лимит исчерпан — запрос к
+   платному сервису не уходит, вместо ответа приходит объяснение и подсказка
+   переключиться на бесплатную локальную модель (пункт 22). Править лимиты:
+   пункт 46 меню.
 
 Выбор: `LLM_BACKEND=api` (облако) или `local` (Ollama). Если стоит `auto`,
 модуль берёт API при наличии ключа, иначе локальную модель.
@@ -32,6 +37,7 @@ import urllib.request
 from pathlib import Path
 
 from config import DATA_ROOT, LLM_MODEL
+from src import api_budget
 
 API_KEY_FILE = Path(os.getenv("POWERMILL_API_KEY_FILE", str(DATA_ROOT / "api_key.json")))
 DEFAULT_TIMEOUT = float(os.getenv("LLM_API_TIMEOUT", "180"))
@@ -121,9 +127,20 @@ def load_settings() -> dict:
     }
 
 
+# Ключи, которые НЕ надо терять при повторной записи настроек: лимиты и цены
+KEEP_ON_SAVE = ("daily_requests", "daily_cost_usd", "monthly_cost_usd",
+                "max_tokens_per_request", "warn_at_percent",
+                "price_input_per_m", "price_output_per_m")
+
+
 def save_settings(provider: str, base_url: str, model: str, api_key: str,
                   code_model: str = "", backend: str = "api") -> Path:
-    """Сохраняет настройки API в файл вне Git (ключ не попадёт в репозиторий)."""
+    """Сохраняет настройки API в файл вне Git (ключ не попадёт в репозиторий).
+
+    Лимиты и цены, если их уже задавали (пункт 46), сохраняются: иначе повторный
+    запуск пункта 21 обнулял бы ограничения расходов — а это как раз то, что
+    человек поставил, чтобы не платить лишнего.
+    """
     API_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "provider": provider,
@@ -134,6 +151,10 @@ def save_settings(provider: str, base_url: str, model: str, api_key: str,
         "backend": backend,
         "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
+    existing = api_budget.read_file_settings()
+    for key in KEEP_ON_SAVE:
+        if existing.get(key) is not None:
+            payload[key] = existing[key]
     API_KEY_FILE.write_text(json.dumps(payload, ensure_ascii=False, indent=1),
                             encoding="utf-8")
     try:
@@ -190,6 +211,13 @@ def chat(prompt: str, model: str = "", settings: dict | None = None,
     if not settings.get("api_key"):
         return ("❌ API не настроен: нет ключа.\n"
                 "   Запусти пункт 21 меню (setup_api.bat) и вставь ключ.")
+
+    # Лимиты расходов проверяем ДО обращения к платному сервису: если исчерпано,
+    # запрос вообще не уходит (см. src/api_budget.py).
+    allowed, refusal = api_budget.check(settings)
+    if not allowed:
+        return refusal
+    max_tokens = api_budget.cap_tokens(max_tokens, settings)
 
     model = model or settings.get("model", "")
     messages = []
@@ -251,9 +279,15 @@ def chat(prompt: str, model: str = "", settings: dict | None = None,
         return f"❌ Сервис отказал: {message}"
 
     try:
-        return data["choices"][0]["message"]["content"].strip()
+        text = data["choices"][0]["message"]["content"].strip()
     except (KeyError, IndexError, TypeError, AttributeError):
         return f"❌ Непонятный ответ сервиса: {raw[:300]}"
+
+    # Записываем расход: сколько токенов и во сколько это примерно обошлось.
+    usage = data.get("usage") if isinstance(data, dict) else None
+    if isinstance(usage, dict):
+        api_budget.record(settings, usage, model=model or settings.get("model", ""))
+    return text
 
 
 def pick_model(kind: str = "chat", settings: dict | None = None) -> str:
@@ -289,6 +323,10 @@ def test_connection(settings: dict | None = None, verbose: bool = True) -> int:
     if settings["backend"] != "api":
         return _test_local(settings, verbose)
 
+    allowed, refusal = api_budget.check(settings)
+    if not allowed and verbose:
+        print(refusal)
+        print()
     answer = chat(TEST_QUESTION, settings=settings, max_tokens=64, temperature=0)
     if verbose:
         print(f"  Ответ модели:\n    {answer[:400]}")
@@ -338,6 +376,10 @@ def main() -> int:
     args = sys.argv[1:]
     if "--test" in args:
         return test_connection()
+    if "--spend" in args:
+        for line in api_budget.summary_lines():
+            print(line)
+        return 0
     if "--show" in args:
         settings = load_settings()
         print(describe_settings(settings))

@@ -542,7 +542,7 @@ def test_probe_runs_the_server_like_a_client_does(capsys):
     assert mcp_server.probe(log=lines.append) == 0
     text = "\n".join(lines)
     assert "как это увидит ИИ-клиент" in text.lower() or "КАК ЭТО УВИДИТ" in text
-    assert "9 инструментов" in text
+    assert f"{len(mcp_server.build_tools())} инструментов" in text
     assert "S (об/мин)" in text                    # ответ настоящего инструмента
     assert "ВСЁ В ПОРЯДКЕ" in text
 

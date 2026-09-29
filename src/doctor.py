@@ -427,6 +427,43 @@ def check_brain() -> list[Check]:
     return checks
 
 
+def check_api_budget() -> Check:
+    """Сколько потрачено на облачный ИИ и не упёрлись ли в лимит.
+
+    Это не ошибка, а важная для кошелька информация: без лимита облачный ИИ
+    может тратить сколько угодно, а с исчерпанным лимитом — молча не отвечать.
+    Поэтому показываем числа прямо в проверке компьютера.
+    """
+    try:
+        from src import api_budget, llm
+
+        settings = llm.load_settings()
+        if settings.get("backend") != "api":
+            return Check("Расходы на ИИ (пункт 46)", STATUS_SKIP,
+                         "работает локальная модель — платить не за что",
+                         "Если подключишь облачный ИИ (пункт 21), лимиты "
+                         "расходов ставятся пунктом 46.")
+        day = api_budget.day_usage()
+        limits_now = api_budget.limits(settings)
+        _price_in, _price_out, known = api_budget.prices(settings)
+        allowed, refusal = api_budget.check(settings)
+        spent = f"{day['requests']} запросов сегодня"
+        if known:
+            spent += f", ${day['cost_usd']:.4f}"
+        if not allowed:
+            return Check("Расходы на ИИ (пункт 46)", STATUS_WARN,
+                         spent + " — лимит исчерпан",
+                         "Запросы к платному сервису не уходят. Поднять лимит: "
+                         "пункт 46 меню. Продолжить бесплатно: пункт 22 "
+                         "(локальная модель).")
+        return Check("Расходы на ИИ (пункт 46)", STATUS_OK,
+                     spent + f" (лимит {int(limits_now['daily_requests'])}/день, "
+                     f"${limits_now['daily_cost_usd']:.2f}/день)")
+    except Exception as error:                                # noqa: BLE001
+        return Check("Расходы на ИИ (пункт 46)", STATUS_WARN,
+                     f"не смог посчитать: {error}")
+
+
 def check_ui(project_dir: Path | str = PROJECT_ROOT) -> Check:
     """Может ли открыться окно приложения: нужен tkinter и иконка."""
     if importlib.util.find_spec("tkinter") is None:
@@ -515,6 +552,7 @@ def collect(data_root: Path | str = DATA_ROOT,
         report.checks.append(check_ribbon())
         report.checks.append(check_plugin())
     report.checks.extend(check_brain())
+    report.checks.append(check_api_budget())
     report.checks.append(check_ui(project_dir))
     report.checks.append(check_install_settings(project_dir, data_root))
     report.checks.append(check_mcp(project_dir))
