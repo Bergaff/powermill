@@ -1,0 +1,16 @@
+# Батники Windows ОБЯЗАНЫ выходить из репозитория с переводами строк CRLF.
+# С LF-строками cmd.exe рвёт строки посередине и выдаёт обрывки вида
+#   'ерка' is not recognized as an internal or external command
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+
+# Скрипты Python — обычные переводы строк по системе
+*.py    text eol=lf
+*.txt   text eol=lf
+
+# Двоичные данные не трогаем
+*.png binary
+*.jpg binary
+*.pdf binary
+*.db  binary
+*.xlsx binary

@@ -1,99 +1,123 @@
 """
-Парсер локальной HTML-справки PowerMill.
+Парсер локальной HTML-справки PowerMill (оффлайн Help + PML PARREF).
 
-Обходит HELP_DIR (оффлайн-справка ProgramData) + PML PARREF,
-вытаскивает чистый текст и сохраняет в output/parsed_html.txt
-в том же формате, что и src.pdf_parser (для общего чанкера).
+ГЛАВНОЕ ПРО ОФФЛАЙН-СПРАВКУ AUTODESK
+------------------------------------
+Внутри `C:\\ProgramData\\Autodesk\\PowerMill\\2026\\Help\\l.rus\\`:
+
+    files\\*.htm            1350 шт., ~850 байт каждый — ПУСТЫШКИ (только скрипты).
+                           Текста внутри нет! Именно поэтому прошлый парсер
+                           нашёл «0 страниц».
+    wrapped-files\\*.htm.js 1350 шт., 0.5-55 КБ — ЗДЕСЬ НАСТОЯЩИЙ ТЕКСТ страниц
+                           (HTML, зашитый в JS-строку).
+    scripts\\toc-treedata.js  дерево оглавления со всеми заголовками.
+    contexthelp\\*.htm       1255 коротких подсказок-терминов.
+
+Что делает этот парсер:
+  1. находит языковую папку (l.rus по умолчанию) — без дублей RU+EN;
+  2. берёт `files\\<имя>.htm`, а если там пустышка — читает
+     `wrapped-files\\<имя>.js` и разворачивает обёртку (src.help_extract);
+  3. подтягивает заголовок и иерархию из оглавления (src.toc_parser);
+  4. пишет три файла в output\\:
+       help_pages.jsonl  — по странице на строку (заголовок, раздел, текст);
+       parsed_html.txt   — то же, человекочитаемо (совместимость со старым кодом);
+       help_report.txt   — отчёт: сколько страниц, где, что нашлось.
 """
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
 import re
+import time
 from pathlib import Path
-from html import unescape
 
-from tqdm import tqdm
+try:  # tqdm — только для прогресс-бара; без него разбор всё равно работает
+    from tqdm import tqdm
+except ImportError:  # pragma: no cover
+    def tqdm(iterable, **kwargs):
+        total = kwargs.get("total") or (len(iterable) if hasattr(iterable, "__len__") else "?")
+        print(f"   ... разбираю {total} файлов (без прогресс-бара)")
+        return iterable
 
-from config import HELP_DIR, HELP_DIR_DEFAULT_EXTRAS, HELP_DIR_EXTRA, OUTPUT_DIR
+from config import (
+    HELP_DIR,
+    HELP_DIR_DEFAULT_EXTRAS,
+    HELP_DIR_EXTRA,
+    HELP_FILE_LIMIT,
+    HELP_FILES_DIR,
+    HELP_LANG,
+    HELP_LANG_PRIORITY,
+    HELP_WRAPPED_DIR,
+    OUTPUT_DIR,
+)
+from src.help_extract import (
+    extract_page_text,
+    is_generic_title,
+    looks_like_help_root,
+    load_page,
+)
+from src.toc_parser import load_toc, save_toc
 
-try:
-    from bs4 import BeautifulSoup
-except ImportError:
-    BeautifulSoup = None
+OUTPUT_FILE = OUTPUT_DIR / "parsed_html.txt"      # совместимость
+PAGES_FILE = OUTPUT_DIR / "help_pages.jsonl"      # основной формат
+REPORT_FILE = OUTPUT_DIR / "help_report.txt"
 
-OUTPUT_FILE = OUTPUT_DIR / "parsed_html.txt"
+SKIP_PARTS = {"bin", "res", "images", "image", "css", "js", "scripts", "wrapped-files"}
 
-# Служебные/ненужные для знаний базы пути
-SKIP_PARTS = {"bin", "res", "images", "image", "css", "js", "scripts"}
+# Нестандартный корень: папка установки PowerMill (lib\locale\C) со справочником
+# PML — PARREF (параметры), PARSUM (сводка), DOC/HELP.
+NONSTD_DIRS = ("parref", "parsum", "doc", "help", "commands", "parameters")
+# Расширения текстовых файлов справки в таких папках
+NONSTD_EXTS = (".htm", ".html", ".txt", ".xml")
+MAX_TEXT_FILE_MB = 5.0
 
-# Порог: короче — служебная заглушка/очень короткая context-подсказка.
-# (15 ловит короткие, но осмысленные contexthelp-термины вроде "3D выборка")
+# Порядок обхода папок. Важно для пробного запуска (--limit): раньше первым по
+# алфавиту шёл contexthelp (термины-редиректы), и проба показывала 0 статей.
+DIR_PRIORITY = {
+    "": 0, "files": 0, "help": 1, "parref": 1, "parsum": 1,
+    "commands": 2, "parameters": 2, "doc": 3, "contexthelp": 4,
+}
+
+STATE_FILE = OUTPUT_DIR / "help_parse_state.json"
+
+# Гигантские страницы справочника параметров PML (например, toolpath.html —
+# 575 000 символов, одна HTML-таблица параметров) нельзя держать одной записью:
+# в FTS они выигрывают у руководства просто из-за размера. Поэтому режем их
+# по заголовкам на части.
+MAX_PAGE_CHARS = 25_000
+
+# Приоритет источника в поиске: меньше = важнее (руководство пользователя
+# полезнее параметрического справочника при обычных вопросах).
+SOURCE_PRIORITY = {"page": 0.0, "contexthelp": 0.4, "pml": 1.0, "redirect": 0.6}
+
+# Названия папок справочника PML для человекочитаемых разделов
+PML_SECTIONS = {
+    "parref": "Справочник параметров PML",
+    "parsum": "Сводка параметров PML",
+    "doc": "Документация установки",
+    "help": "Справка установки",
+    "commands": "Команды PML",
+    "parameters": "Параметры PML",
+}
+
+# Порог «страница не пустая». 15 ловит короткие contexthelp-термины.
 MIN_TEXT_LEN = 15
 
-
-def decode_html(raw: bytes) -> str:
-    """Кодировка HTML: meta charset → BOM → utf-8 → cp1251 (рус. справка)."""
-    if not raw:
-        return ""
-    m = re.search(br"charset\s*=\s*[\"']?([\w\-]+)", raw[:4096], re.I)
-    if m:
-        cs = m.group(1).decode("ascii", "ignore").lower()
-        try:
-            return raw.decode(cs, errors="replace")
-        except LookupError:
-            pass
-    if raw.startswith(b"\xef\xbb\xbf"):
-        return raw.decode("utf-8-sig", errors="replace")
-    for enc in ("utf-8", "cp1251", "windows-1251"):
-        try:
-            return raw.decode(enc)
-        except UnicodeDecodeError:
-            continue
-    # последний шанс: cp1251 не бросает ошибок на любых байтах
-    return raw.decode("cp1251", errors="replace")
+# Кандидаты имён «обёрнутых» файлов для страницы files\\GUID-1.htm
+WRAPPED_SUFFIXES = ("", ".js")
 
 
-def html_to_text(path: Path) -> tuple[str, str]:
-    """HTML-файл -> (заголовок, чистый текст)."""
-    raw = path.read_bytes()
-    data = decode_html(raw)
-
-    if BeautifulSoup is not None:
-        soup = BeautifulSoup(data, "html.parser")
-        for tag in soup(["script", "style", "nav", "header", "footer", "noscript"]):
-            tag.decompose()
-        title = (soup.title.string if soup.title else "") or path.stem
-        text = soup.get_text("\n")
-    else:
-        data = re.sub(r"(?is)<(script|style).*?>.*?</\1>", " ", data)
-        m = re.search(r"(?is)<title>(.*?)</title>", data)
-        title = m.group(1).strip() if m else path.stem
-        text = unescape(re.sub(r"(?s)<[^>]+>", " ", data))
-
-    text = re.sub(r"[ \t]+", " ", text)
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    lines = [ln.strip() for ln in text.splitlines()]
-    text = "\n".join(ln for ln in lines if ln)
-    return title.strip(), text.strip()
-
-
-def iter_help_files(root: Path):
-    """Все .html/.htm под корнем, кроме служебных папок."""
-    patterns = ("*.html", "*.htm")
-    seen = set()
-    for pattern in patterns:
-        for path in sorted(root.rglob(pattern)):
-            parts_lower = {p.lower() for p in path.relative_to(root).parts[:-1]}
-            if parts_lower & SKIP_PARTS:
-                continue
-            if path in seen:
-                continue
-            seen.add(path)
-            yield path
+# --------------------------------------------------------------------------
+# Поиск корней справки
+# --------------------------------------------------------------------------
+LANG_DIR_RE = re.compile(r"^l\.[a-z]{2,3}$", re.I)
 
 
 def help_roots() -> list[Path]:
-    """Все корни справки: HELP_DIR + доп. из env + PML-справочник установки."""
-    roots: list[Path] = [HELP_DIR]
-    roots.extend(HELP_DIR_EXTRA)
-    roots.extend(HELP_DIR_DEFAULT_EXTRAS)
+    """Корни справки: HELP_DIR + extras, существующие."""
+    roots: list[Path] = [HELP_DIR, *HELP_DIR_EXTRA, *HELP_DIR_DEFAULT_EXTRAS]
     seen: set[Path] = set()
     out: list[Path] = []
     for r in roots:
@@ -111,99 +135,666 @@ def help_roots() -> list[Path]:
     return out
 
 
-def parse_all_help() -> list[dict]:
-    """Парсит всю локальную HTML-справку -> output/parsed_html.txt."""
-    roots = help_roots()
+def is_nonstd_root(root: Path) -> bool:
+    """Похоже ли, что это папка установки PowerMill со справочником PML."""
+    try:
+        names = {p.name.lower() for p in root.iterdir() if p.is_dir()}
+    except OSError:
+        return False
+    return bool(names & set(NONSTD_DIRS))
+
+
+def pick_lang_dir(root: Path, lang: str) -> Path | None:
+    """Выбирает языковую папку внутри Help: l.rus / l.enu / ... (без дублей)."""
+    if looks_like_help_root(root):
+        return root  # это уже языковая папка (внутри files/ или scripts/)
+    try:
+        subdirs = [p for p in root.iterdir() if p.is_dir() and LANG_DIR_RE.match(p.name)]
+    except OSError:
+        return None
+    if not subdirs:
+        # справочник PML установки PowerMill (PARREF/PARSUM/DOC/HELP)
+        return root if is_nonstd_root(root) else None
+
+    by_lang = {p.name.split(".", 1)[1].lower(): p for p in subdirs}
+    if lang and lang != "auto":
+        return by_lang.get(lang)
+    for code in HELP_LANG_PRIORITY:
+        if code in by_lang:
+            return by_lang[code]
+    return sorted(subdirs)[0]
+
+
+def iter_page_files(root: Path):
+    """Файлы-страницы справки: все .htm/.html, кроме служебных папок.
+
+    Обычно это `files\\*.htm` (1350 тем) + `contexthelp\\*.htm`
+    (1255 терминов). Для папки установки PowerMill (PARREF/PARSUM/DOC/HELP)
+    дополнительно читаются .txt/.xml.
+    """
+    candidates = sorted(root.rglob("*.htm")) + sorted(root.rglob("*.html"))
+    if is_nonstd_root(root):
+        for ext in (".txt", ".xml"):
+            candidates += sorted(root.rglob(f"*{ext}"))
+    # настоящие статьи (files/) — раньше терминов-подсказок (contexthelp/)
+    candidates.sort(key=lambda path: _file_order(root, path))
+    for p in candidates:
+        parts = {seg.lower() for seg in p.relative_to(root).parts[:-1]}
+        if parts & SKIP_PARTS:
+            continue
+        if p.suffix.lower() in (".txt", ".xml"):
+            try:
+                if p.stat().st_size > MAX_TEXT_FILE_MB * 1e6:
+                    print(f"ℹ Пропускаю большой файл: {p.name}")
+                    continue
+            except OSError:
+                continue
+        yield p
+
+
+def wrapped_candidates(root: Path, page: Path) -> list[Path]:
+    """Возможные «обёрнутые» файлы для страницы (wrapped-files\\<имя>.js и т.п.)."""
+    names = [page.name, page.stem + ".htm", page.stem + ".html"]
+    out: list[Path] = []
+    for wrapped_dir in (root / HELP_WRAPPED_DIR, page.parent.parent / HELP_WRAPPED_DIR,
+                        page.parent / HELP_WRAPPED_DIR):
+        if not wrapped_dir.is_dir():
+            continue
+        for name in names:
+            for suffix in WRAPPED_SUFFIXES:
+                cand = wrapped_dir / (name + suffix)
+                if cand.is_file():
+                    out.append(cand)
+    return out
+
+
+_HEADING_RE = re.compile(r"^(#{1,3})\s+(.+)$")
+
+
+def split_page_text(text: str, max_chars: int = MAX_PAGE_CHARS) -> list[tuple[str, str]]:
+    """Режет длинный текст на части по заголовкам.
+
+    Возвращает [(подзаголовок, текст части), ...]. Для коротких текстов —
+    одна часть с пустым подзаголовком.
+    """
+    if len(text) <= max_chars:
+        return [("", text)]
+
+    parts: list[tuple[str, str]] = []
+    buffer: list[str] = []
+    size = 0
+    subtitle = ""
+
+    for line in text.split("\n"):
+        head = _HEADING_RE.match(line.strip())
+        is_section = bool(head) and len(head.group(1)) >= 2
+        # начинаем новую часть, если накопили достаточно и пошёл новый раздел
+        if is_section and size >= max_chars * 0.6 and buffer:
+            parts.append((subtitle, "\n".join(buffer).strip()))
+            buffer, size, subtitle = [], 0, ""
+        if is_section:
+            subtitle = head.group(2).strip()
+        buffer.append(line)
+        size += len(line) + 1
+        if size >= max_chars:
+            parts.append((subtitle, "\n".join(buffer).strip()))
+            # перекрытие по последним строкам, чтобы не терять контекст
+            tail = buffer[-3:]
+            buffer, size = list(tail), sum(len(x) + 1 for x in tail)
+
+    if buffer and "\n".join(buffer).strip():
+        parts.append((subtitle, "\n".join(buffer).strip()))
+    return [(t, p) for t, p in parts if p]
+
+
+def pml_section_and_title(root: Path, page: Path, text: str, title: str) -> tuple[str, str]:
+    """Раздел и заголовок для страниц справочника PML (PARREF/PARSUM/...)."""
+    try:
+        sub = page.relative_to(root).parts[0].lower()
+    except (ValueError, IndexError):
+        sub = ""
+    section = PML_SECTIONS.get(sub, "Справочник PowerMill")
+    stem = page.stem if page.suffix.lower() in ("", ".htm", ".html") else page.name
+    stem = stem.replace(".htm", "").replace(".html", "")
+    # общий <title> («PowerMill Parameter Reference») не различает страницы —
+    # берём первый осмысленный заголовок внутри, иначе имя файла
+    if not title or title.lower() in GENERIC_TITLE_MARKS or len(title) > 60:
+        # сначала подзаголовок (## — конкретный параметр/раздел), потом общий (#)
+        heading = (re.search(r"(?m)^##\s+(.+)$", text)
+                   or re.search(r"(?m)^#\s+(.+)$", text))
+        title = heading.group(1).strip() if heading else stem
+    return section, f"{title} ({stem})"
+
+
+GENERIC_TITLE_MARKS = {
+    "powermill parameter reference", "powermill parameter summary",
+    "help", "spravka", "parameter reference",
+}
+
+
+def _file_order(root: Path, path: Path) -> tuple[int, str]:
+    """Ключ сортировки: сначала основные статьи, потом подсказки и служебное."""
+    try:
+        rel = path.relative_to(root)
+    except ValueError:
+        rel = path
+    parts = [seg.lower() for seg in rel.parts[:-1]]
+    top = parts[0] if parts else ""
+    return (DIR_PRIORITY.get(top, 5), rel.as_posix().lower())
+
+
+def page_kind(root: Path, page: Path) -> str:
+    """Тип страницы по расположению: contexthelp / pml / page."""
+    rel = str(page.relative_to(root)).replace("\\", "/").lower()
+    if "contexthelp" in rel or rel.startswith("ctx"):
+        return "contexthelp"
+    if "parref" in rel or "parsum" in rel or "cmdref" in rel:
+        return "pml"
+    return "page"
+
+
+def crumb_title(toc_entry: dict | None, title: str) -> str:
+    if toc_entry and toc_entry.get("breadcrumb"):
+        return " > ".join([*toc_entry["breadcrumb"], title or toc_entry["title"]])
+    return title
+
+
+def _read_text(path: Path) -> tuple[str, str]:
+    """Файл -> (заголовок, текст). Ошибок не бросает."""
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return "", ""
+    if path.suffix.lower() in (".txt", ".xml"):
+        from src.help_extract import decode_html, html_to_structured_text
+
+        text = decode_html(raw)
+        if path.suffix.lower() == ".xml" and "<" in text[:200]:
+            text = html_to_structured_text(text)
+        return path.stem, text.strip()
+    return extract_page_text(raw, path)
+
+
+def wrapped_html(root: Path, page: Path) -> dict:
+    """Читает wrapped-файл страницы (там лежит настоящий HTML и его метаданные)."""
+    for cand in wrapped_candidates(root, page):
+        info = load_page(cand)
+        if len(info["text"]) >= MIN_TEXT_LEN:
+            return info
+    return {}
+
+
+def parse_page(root: Path, page: Path, toc_map: dict[str, dict]) -> list[dict]:
+    """Одна страница справки -> список словарей.
+
+    Обычная страница даёт один элемент; гигантская (справочник параметров PML)
+    режется по заголовкам на части, чтобы одна таблица на 575 000 символов
+    не вытесняла руководство пользователя из результатов поиска.
+    """
+    single = _parse_page_single(root, page, toc_map)
+    if not single:
+        return []
+    if not single.get("text"):
+        return [single]
+
+    parts = split_page_text(single["text"])
+    if len(parts) == 1:
+        return [single]
+
+    total = len(parts)
+    result: list[dict] = []
+    for i, (subtitle, part_text) in enumerate(parts, 1):
+        item = dict(single)
+        item["text"] = part_text
+        item["text_chars"] = len(part_text)
+        item["part"] = i
+        item["parts_total"] = total
+        item["path"] = f"{single['path']}#part{i}"
+        item["source"] = f"{single['source']} (часть {i}/{total})"
+        if subtitle:
+            item["title"] = f"{single['title']} · {subtitle}"
+            if single.get("breadcrumb"):
+                item["breadcrumb"] = f"{single['breadcrumb']} · {subtitle}"
+            else:
+                item["breadcrumb"] = subtitle
+        result.append(item)
+    return result
+
+
+def _parse_page_single(root: Path, page: Path, toc_map: dict[str, dict]) -> dict | None:
+    """Одна страница справки -> словарь. None, если текста нет."""
+    stub = load_page(page)                      # .htm: заглушка, но с метаданными
+    title, text = stub["title"], stub["text"]
+    meta = dict(stub["meta"])
+    redirect_to = stub["redirect_to"] or ""
+    source_used = "htm"
+
+    if len(text) < MIN_TEXT_LEN:
+        wrapped = wrapped_html(root, page)      # настоящий текст страницы
+        if wrapped:
+            title = wrapped["title"] or title
+            text = wrapped["text"]
+            source_used = "wrapped"
+            for key, value in wrapped["meta"].items():
+                meta.setdefault(key, value)
+            redirect_to = redirect_to or wrapped["redirect_to"]
+
+    topic_type = (meta.get("topic-type") or "").lower()
+
+    # Страницы-редиректы (contexthelp): полезного текста нет, но есть
+    # человеческий заголовок термина и ссылка на настоящую страницу —
+    # такие записи пригодятся для поиска по терминам.
+    if len(text.strip()) < MIN_TEXT_LEN:
+        if topic_type == "redirect" or redirect_to:
+            rel_short = page.relative_to(root).as_posix()
+            return {
+                "source": f"{root.name}/{rel_short}",
+                "root": root.name,
+                "path": rel_short,
+                "lang": root.name,
+                "kind": "redirect",
+                "title": title or page.stem,
+                "breadcrumb": title or page.stem,
+                "section": "",
+                "order": 10_000,
+                "text_chars": 0,
+                "extracted_from": "redirect",
+                "redirect_to": redirect_to,
+                "contextid": meta.get("contextid", ""),
+                "topicid": meta.get("topicid", ""),
+                "topic_type": topic_type,
+                "text": "",
+            }
+        return None
+
+    rel = page.relative_to(root).as_posix()
+    toc_entry = toc_map.get(rel.lower()) or toc_map.get(
+        (HELP_FILES_DIR + "/" + page.name).lower()
+    )
+    # Заголовок: осмысленный <h1>/<title> из страницы важнее, а оглавление
+    # подставляет заголовок там, где в файле его нет (обычный случай).
+    toc_title = (toc_entry or {}).get("title", "")
+    if toc_title and is_generic_title(title, page):
+        title = toc_title
+
+    kind = page_kind(root, page)
+    section = " > ".join(toc_entry["breadcrumb"]) if toc_entry else ""
+
+    # Справочник PML (PARREF/PARSUM/POWMILLSYS...): у всех страниц один общий
+    # <title>, поэтому делаем человекочитаемый раздел и заголовок с именем файла
+    if kind == "pml":
+        section, title = pml_section_and_title(root, page, text, title)
+        crumb = f"{section} > {title}"
+    else:
+        crumb = crumb_title(toc_entry, title)
+
+    return {
+        "source": f"{root.name}/{rel}",
+        "root": root.name,
+        "path": rel,
+        "lang": root.name,
+        "kind": kind,
+        "title": title,
+        "breadcrumb": crumb,
+        "section": section,
+        "order": toc_entry["order"] if toc_entry else 10_000,
+        "text_chars": len(text),
+        "extracted_from": source_used,
+        "priority": SOURCE_PRIORITY.get(kind, 0.5),
+        "redirect_to": redirect_to,
+        "contextid": meta.get("contextid", ""),
+        "topicid": meta.get("topicid", ""),
+        "topic_type": topic_type or ("concept" if text else ""),
+        "text": text,
+    }
+
+
+# --------------------------------------------------------------------------
+# Основной проход
+# --------------------------------------------------------------------------
+def parse_all_help(limit: int | None = None, lang: str | None = None,
+                   roots: list[Path] | None = None) -> list[dict]:
+    """Парсит справку -> output/help_pages.jsonl (+ parsed_html.txt, help_report)."""
+    roots = roots if roots is not None else help_roots()
+    limit = HELP_FILE_LIMIT if limit is None else limit
+    lang = (lang or HELP_LANG).lower()
+
     if not roots:
         print("⚠ Не найдено ни одной папки справки.")
         print("   Задай: set POWERMILL_HELP_DIR=C:\\...\\Help")
         print("   Найти: scripts\\find_help.bat")
         return []
 
-    all_files: list[tuple[Path, Path]] = []
+    print("📘 Справка: ищу языковые папки...")
+    lang_roots: list[Path] = []
     for root in roots:
-        files = list(iter_help_files(root))
-        print(f"📘 {root}: {len(files)} HTML")
-        for f in files:
-            all_files.append((root, f))
+        chosen = pick_lang_dir(root, lang)
+        if chosen is None:
+            print(f"   ⚠ {root}: нет ни языковых папок (l.rus/l.enu), ни files/")
+            continue
+        if chosen != root:
+            print(f"   ✓ {root} -> язык '{chosen.name}'")
+        else:
+            print(f"   ✓ {root} (корень справки)")
+        lang_roots.append(chosen)
+
+    if not lang_roots:
+        print("\n⚠ Не нашёл папку с языком справки.")
+        print("   Запусти: scripts\\find_help.bat и пришли вывод — я подскажу путь.")
+        return []
+
+    toc_map, toc_nodes = load_toc(lang_roots)
+    if toc_map:
+        json_path, txt_path = save_toc(toc_map, toc_nodes, OUTPUT_DIR)
+        print(f"🗂 Оглавление: {len(toc_nodes)} узлов -> {txt_path.name}, {json_path.name}")
+
+    all_files: list[tuple[Path, Path]] = []
+    for root in lang_roots:
+        files = list(iter_page_files(root))
+        print(f"📘 {root.name}: {len(files)} файлов-страниц")
+        all_files.extend((root, f) for f in files)
 
     if not all_files:
         print("⚠ HTML-файлы не найдены.")
         return []
 
-    print(f"📘 Всего: {len(all_files)} HTML-файлов справки")
+    files_total = len(all_files)
+    if limit and limit > 0:
+        all_files = all_files[:limit]
+        print(f"⏱ Ограничение: парсим только {len(all_files)} файлов (для проверки)")
+        print("   → это ПРОБА: база будет неполной, для полной запусти")
+        print("     start_parse_help.bat без числа (пункт 4 меню)")
+
+    print(f"📘 Всего к разбору: {len(all_files)} страниц")
 
     pages: list[dict] = []
-    short = 0
-    short_samples: list[str] = []
-    errors = 0
-
-    # статистика: корень -> подпапка -> (найдено, извлечено, сумма символов)
+    redirects: list[dict] = []
     stats: dict[str, dict[str, list[int]]] = {}
+    seen_hashes: dict[str, str] = {}
+    duplicates = 0
+    empty = 0
+    errors = 0
+    from_wrapped = 0
+    empty_samples: list[str] = []
 
     for root, path in tqdm(all_files, desc="Парсинг HTML"):
         try:
-            title, text = html_to_text(path)
-            rel = path.relative_to(root)
-            # группировка: первые 2 компонента пути (Help\l.rus\contexthelp\...)
-            if len(rel.parts) >= 3:
-                top = "\\".join(rel.parts[:3])
-            elif len(rel.parts) == 2:
-                top = "\\".join(rel.parts)
-            else:
-                top = rel.parts[0]
-            st = stats.setdefault(str(root.name), {})
-            cell = st.setdefault(top, [0, 0, 0])
-            cell[0] += 1
-
-            if len(text) < MIN_TEXT_LEN:
-                short += 1
-                if len(short_samples) < 8:
-                    snip = text[:70].replace("\n", " ")
-                    short_samples.append(f"   {len(text):>4} симв.  {rel}  | {snip}")
-                continue
-
-            cell[1] += 1
-            cell[2] += len(text)
-            source = f"{root.name}/{rel}"
-            pages.append({"title": title, "text": text, "source": source})
-        except Exception as e:
+            parsed = parse_page(root, path, toc_map)
+        except Exception as e:  # noqa: BLE001 — одна битая страница не должна ронять всё
             errors += 1
             if errors <= 5:
                 print(f"  ❌ {path.name}: {e}")
+            continue
+
+        rel = path.relative_to(root).as_posix()
+        key = f"{root.name}:{'/'.join(rel.split('/')[:2])}"
+        cell = stats.setdefault(key, [0, 0, 0])
+        cell[0] += 1
+
+        if not parsed:
+            empty += 1
+            if len(empty_samples) < 6:
+                empty_samples.append(f"   {rel}")
+            continue
+
+        for page in parsed:
+            if not page.get("text"):
+                # страница-редирект: текста нет, но есть заголовок термина
+                redirects.append(page)
+                continue
+
+            digest = hashlib.md5(page["text"].encode("utf-8")).hexdigest()
+            if digest in seen_hashes:
+                duplicates += 1
+                continue
+            seen_hashes[digest] = page["path"]
+
+            if page["extracted_from"].startswith("wrapped"):
+                from_wrapped += 1
+
+            cell[1] += 1
+            cell[2] += page["text_chars"]
+            pages.append(page)
+
+    # Разрешаем редиректы: заголовок термина уходит в aliases целевой страницы.
+    # Так «Иерархия 2D-элементов» ищется по настоящей статье, а не по пустышке.
+    by_rel = {p["path"].lower(): p for p in pages}
+    by_name = {Path(p["path"]).name.lower(): p for p in pages}
+    resolved = 0
+    leftover_redirects: list[dict] = []
+    for red in redirects:
+        target = (red.get("redirect_to") or "").replace("\\", "/").lower()
+        target_page = None
+        if target:
+            target_page = by_rel.get(target) or by_name.get(Path(target).name)
+            if target_page is None and not target.startswith("files/"):
+                target_page = by_rel.get("files/" + target) or by_rel.get(target)
+        if target_page is not None:
+            aliases = target_page.setdefault("aliases", [])
+            term = red.get("title", "")
+            if term and term not in aliases:
+                aliases.append(term)
+            if red.get("contextid"):
+                target_page.setdefault("contextids", [])
+                if red["contextid"] not in target_page["contextids"]:
+                    target_page["contextids"].append(red["contextid"])
+            resolved += 1
+        else:
+            leftover_redirects.append(red)
+
+    # Второй шанс: привязка по contextid. В files\*.htm есть
+    # <meta name="contextid" content="TOOLDIALOG"> — у термина-редиректа он часто тот же.
+    by_context: dict[str, dict] = {}
+    for page in pages:
+        for cid in page.get("contextids") or []:
+            by_context.setdefault(cid.upper(), page)
+        if page.get("contextid"):
+            by_context.setdefault(page["contextid"].upper(), page)
+
+    still_left: list[dict] = []
+    for red in leftover_redirects:
+        cid = (red.get("contextid") or "").upper()
+        target_page = by_context.get(cid) if cid else None
+        if target_page is not None:
+            aliases = target_page.setdefault("aliases", [])
+            term = red.get("title", "")
+            if term and term not in aliases:
+                aliases.append(term)
+            resolved += 1
+        else:
+            still_left.append(red)
+    leftover_redirects = still_left
+
+    # Оставшиеся термины держим как короткие записи-подсказки: по названию
+    # термина всё равно можно найти нужный раздел справки.
+    for red in leftover_redirects:
+        term = red.get("title", "")
+        red["text"] = (f"Термин справки PowerMill: «{term}». "
+                       f"Смотрите соответствующий раздел документации.")
+        red["text_chars"] = len(red["text"])
+        red["extracted_from"] = "redirect-only"
+
+    pages.extend(leftover_redirects)
+
+    pages.sort(key=lambda p: (p["order"], p["source"]))
+
+    # настоящие макросы с диска (data\macros): примеры рабочего PML для /macro
+    try:
+        from src.macro_index import collect as collect_macros
+
+        macro_pages = collect_macros()
+        if macro_pages:
+            pages.extend(macro_pages)
+            print(f"🧩 Макросов с диска добавлено: {len(macro_pages)}")
+    except Exception as e:  # noqa: BLE001
+        print(f"(!) Макросы не добавились: {e}")
+
+    PAGES_FILE.write_text(
+        "\n".join(json.dumps(p, ensure_ascii=False) for p in pages), encoding="utf-8"
+    )
 
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         for page in pages:
             f.write(f"\n{'=' * 60}\n")
             f.write(f"Источник: {page['source']} | Заголовок: {page['title']}\n")
+            if page["section"]:
+                f.write(f"Раздел: {page['section']}\n")
             f.write(f"{'=' * 60}\n")
             f.write(page["text"] + "\n")
 
-    print(f"✅ Извлечено {len(pages)} страниц из {len(all_files)} HTML -> {OUTPUT_FILE}")
+    total_chars = sum(p["text_chars"] for p in pages)
+    print(f"\n✅ Извлечено {len(pages)} страниц "
+          f"({total_chars / 1_000_000:.1f} млн символов)")
+    print(f"   из них через wrapped-files: {from_wrapped}")
+    print(f"   терминов-редиректов привязано к статьям: {resolved}")
+    print(f"   терминов без статьи (остались как подсказки): {len(leftover_redirects)}")
+    print(f"   пустых/служебных: {empty}, дублей: {duplicates}, ошибок: {errors}")
+    print(f"💾 {PAGES_FILE}")
+    print(f"💾 {OUTPUT_FILE}")
 
-    print("\n📊 По подпапкам (найдено / извлечено / сумма символов):")
-    for root_name, st in stats.items():
-        print(f"  [{root_name}]")
-        for sub, (n_found, n_ok, chars) in sorted(
-            st.items(), key=lambda kv: -kv[1][2]
-        ):
-            print(f"    {sub:<28} {n_found:>5} / {n_ok:>5}  {chars:>9} симв.")
+    print("\n📊 По папкам (найдено / извлечено / символов):")
+    for key, (n_found, n_ok, chars) in sorted(stats.items(), key=lambda kv: -kv[1][2]):
+        print(f"    {key:<40} {n_found:>5} / {n_ok:>5}  {chars:>9}")
 
     if pages:
-        longest = sorted(pages, key=lambda p: -len(p["text"]))[:5]
-        print("\n📏 Самые длинные статьи (значит, полные тексты есть):")
-        for p in longest:
-            src = p["source"][:70]
-            print(f"    {len(p['text']):>6} симв.  {src}")
+        print("\n📏 Самые длинные статьи:")
+        for p in sorted(pages, key=lambda p: -p["text_chars"])[:5]:
+            print(f"    {p['text_chars']:>6} симв.  {p['breadcrumb'][:80]}")
 
-    if short:
-        print(f"\n✂ Короче {MIN_TEXT_LEN} симв. (заглушки/пустые): {short}")
-        for s in short_samples:
+        print("\n🗂 Крупные разделы справки:")
+        from collections import Counter
+
+        top = Counter(p["section"].split(" > ")[0] for p in pages if p["section"])
+        for name, cnt in top.most_common(12):
+            print(f"    {cnt:>4} стр.  {name}")
+
+    if empty_samples:
+        print("\n✂ Примеры страниц без текста:")
+        for s in empty_samples:
             print(s)
-    if errors:
-        print(f"❌ Ошибок чтения: {errors}")
+
+    # состояние разбора: чтобы батники и отчёт знали, полная это база или проба
+    try:
+        STATE_FILE.write_text(
+            json.dumps({
+                "pages": len(pages),
+                "files_total": files_total,
+                "limit": limit,
+                "complete": not (limit and limit > 0),
+                "from_wrapped": from_wrapped,
+                "terms_linked": resolved,
+                "terms_left": len(leftover_redirects),
+                "roots": [str(r) for r in lang_roots],
+                "finished_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            }, ensure_ascii=False, indent=1),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+    # словарь настоящих имён PML — чтобы макросы генерировались по документации
+    try:
+        from src.pml_vocab import build_vocabulary, save_vocabulary
+
+        vocab = build_vocabulary(pages)
+        save_vocabulary(vocab)
+        print(f"🧾 Словарь PML: типов объектов {len(vocab['entities'])}, "
+              f"имён параметров {len(vocab['parameters'])}")
+    except Exception as e:  # noqa: BLE001 — словарь не важнее самого разбора
+        print(f"(!) Словарь PML не собрался: {e}")
+
+    if limit and limit > 0:
+        print()
+        print("⚠ ЭТО ПРОБНЫЙ ЗАПУСК: разобрано только "
+              f"{len(pages)} из {files_total} страниц.")
+        print("   Поиск уже работает, но по этой части справки.")
+        print("   Полная база: start_parse_help.bat (пункт 4 меню).")
+
+    REPORT_FILE.write_text(
+        _report_text(pages, stats, empty, duplicates, errors, from_wrapped,
+                     toc_nodes, empty_samples, lang_roots),
+        encoding="utf-8",
+    )
+    print(f"📝 Отчёт: {REPORT_FILE} (можно прислать целиком в чат)")
     return pages
 
 
+def _report_text(pages, stats, empty, duplicates, errors, from_wrapped,
+                 toc_nodes, empty_samples, lang_roots) -> str:
+    from collections import Counter
+
+    lines = [
+        "=" * 70,
+        "ОТЧЁТ: разбор оффлайн-справки PowerMill",
+        "=" * 70,
+        f"Корни справки: {', '.join(str(r) for r in lang_roots)}",
+        f"Страниц извлечено: {len(pages)}",
+        f"  - через wrapped-files (JS-обёртка): {from_wrapped}",
+        f"  - напрямую из HTML: {len(pages) - from_wrapped}",
+        f"Символов всего: {sum(p['text_chars'] for p in pages):,}",
+        f"Пустых/служебных: {empty} | дублей: {duplicates} | ошибок: {errors}",
+        f"Узлов оглавления: {len(toc_nodes)}",
+        "",
+        "ПО ПАПКАМ: найдено / извлечено / символов",
+    ]
+    for key, (n_found, n_ok, chars) in sorted(stats.items(), key=lambda kv: -kv[1][2]):
+        lines.append(f"  {key:<45} {n_found:>5} / {n_ok:>5}  {chars:>10}")
+    lines.append("")
+    lines.append("ТИПЫ СТРАНИЦ:")
+    for kind, cnt in Counter(p["kind"] for p in pages).most_common():
+        lines.append(f"  {kind:<15} {cnt:>5}")
+    lines.append("")
+    lines.append("КРУПНЫЕ РАЗДЕЛЫ (верхний уровень оглавления):")
+    for name, cnt in Counter(
+        p["section"].split(" > ")[0] for p in pages if p["section"]
+    ).most_common(40):
+        lines.append(f"  {cnt:>5} стр.  {name}")
+    lines.append("")
+    lines.append("САМЫЕ ДЛИННЫЕ СТАТЬИ:")
+    for p in sorted(pages, key=lambda p: -p["text_chars"])[:25]:
+        lines.append(f"  {p['text_chars']:>7}  {p['breadcrumb'][:100]}")
+    if empty_samples:
+        lines.append("")
+        lines.append("ПРИМЕРЫ ПУСТЫХ СТРАНИЦ:")
+        lines.extend(empty_samples)
+    lines.append("")
+    lines.append("ПЕРВЫЕ 60 УЗЛОВ ОГЛАВЛЕНИЯ:")
+    from src.toc_parser import toc_as_tree_text
+
+    lines.append(toc_as_tree_text(toc_nodes, max_nodes=60))
+    return "\n".join(lines)
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="Парсер оффлайн-справки PowerMill")
+    ap.add_argument("--limit", type=int, default=None,
+                    help="разобрать только N первых страниц (проверка)")
+    ap.add_argument("--lang", default=None, help="язык справки: rus / enu / auto")
+    ap.add_argument("--root", action="append", default=None,
+                    help="свой корень справки (можно несколько раз)")
+    args = ap.parse_args()
+
+    # весь вывод дублируем в output\logs\parse_help.log — если окно закроется,
+    # батник покажет хвост лога, а файл можно прислать в чат
+    from src.applog import log_error_to_file, start_log
+
+    log_file = start_log("parse_help")
+    print(f"Лог этого запуска: {log_file}\n")
+    try:
+        roots = [Path(p) for p in args.root] if args.root else None
+        pages = parse_all_help(limit=args.limit, lang=args.lang, roots=roots)
+        if not pages:
+            print("\n(!) Не извлечено ни одной страницы — смотри сообщения выше.")
+            print("    Диагностика структуры: scripts\\dump_help_samples.bat")
+            raise SystemExit(2)
+        print("\n[OK] Разбор завершён успешно.")
+    except SystemExit:
+        raise
+    except Exception:  # noqa: BLE001
+        print("\n(!) Ошибка при разборе справки:")
+        log_error_to_file()
+        raise SystemExit(3)
+
+
 if __name__ == "__main__":
-    parse_all_help()
+    main()
