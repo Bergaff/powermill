@@ -139,6 +139,8 @@ def main() -> int:
     print("\n".join(pm_check.preview(plan)))
     print()
     print("  Проверки PowerMill могут идти долго на сложных траекториях.")
+    print("  (!) Державка (патрон/цанга) у созданных нами фресок не задаётся:")
+    print("      столкновения державки проверить нечем — только саму фрезу.")
     print()
 
     answer = ask_yes_no("  Запустить проверки сейчас? (да/нет) [нет]: ")
@@ -172,7 +174,8 @@ def main() -> int:
     steps_result, note = pm_check.last_result()
     text = pm_check.format_result(steps_result)
     _all_ok, summary = pm_check.summarize(steps_result)
-    body = ["Проверки траекторий (шаг 3.4, пункт 35)", "", text, "", *summary]
+    body = ["Проверки траекторий (шаг 3.4, пункт 35)", "", text, "", *summary,
+            *pm_check.not_checked_lines(plan)]
     if not got:
         body.append("")
         body.append("Отчёт от макроса не появился — значит макрос остановился или "

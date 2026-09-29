@@ -237,3 +237,18 @@ def test_result_paths_for_reports():
     paths = pm_check.result_paths()
     assert paths["macro"].name == "pm_check.mac"
     assert paths["result"].name == "pm_check_result.txt"
+
+
+def test_not_checked_lines_tell_about_the_missing_holder():
+    plan = pm_check.CheckPlan(toolpaths=["Chernovaya_D16"])
+    text = "\n".join(pm_check.not_checked_lines(plan))
+    assert "патрон" in text and "цанга" in text
+    assert "поймать нечем" in text
+    assert "пробный прогон" in text
+
+
+def test_not_checked_lines_without_collision_stay_short():
+    plan = pm_check.CheckPlan(toolpaths=["Chernovaya_D16"], collision=False,
+                              read_status=False)
+    text = "\n".join(pm_check.not_checked_lines(plan))
+    assert "патрон" not in text
