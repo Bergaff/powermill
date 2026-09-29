@@ -231,6 +231,33 @@ def main() -> int:
             print(f"  Отчёт: {pm_flow.save_report(report)} (пункт 29 меню)")
             return 1
         if not pm_flow.wait_for_part(part, before, result_file):
+            if part.verify:
+                # Часть-проверка перед опасным шагом (сейчас это заготовка):
+                # если она не прочиталась, расчёт почти наверняка упадёт с
+                # «заготовка не определена» — объясняем и спрашиваем.
+                report.add(f"Операция: {part.title}", "fail",
+                           "не удалось прочитать заготовку — похоже, она не определена")
+                report.warnings.append(
+                    "Заготовка не определилась. В PowerMill: Домой -> Заготовка ->"
+                    " «Вычислить» -> «Принять», потом запусти пункт 37 заново.")
+                print()
+                print(f"  ✘ {part.title}: заготовку прочитать не удалось.")
+                print("     Это значит, что она НЕ определена — расчёт упадёт с тем же")
+                print("     «заготовка не определена или содержит неподходящие значения».")
+                print("     Что сделать в PowerMill руками (полминуты):")
+                print("       Домой -> Заготовка -> «Вычислить» -> «Принять».")
+                print("     Потом запусти пункт 37 заново — он увидит готовую заготовку.")
+                print(f"  Файл части: {part_path}")
+                print(f"  Отчёт: {pm_flow.save_report(report)} (пункт 29 меню)")
+                if not ask_yes_no("  Попробовать расчёт всё равно? (да/нет) [нет]: "):
+                    return 0
+                print("  Хорошо, продолжаю — расчёт может не пройти.")
+                print()
+                steps_result, _note = pm_operation.last_result(result_file)
+                for step, status, detail in steps_result:
+                    report.add(f"Операция: {pm_operation.STEP_TITLES.get(step, step)}",
+                               status, detail)
+                continue
             report.add(f"Операция: {part.title}", "fail",
                        "PowerMill не дошёл до конца этой части")
             report.warnings.append(

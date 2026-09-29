@@ -178,8 +178,9 @@ def test_operation_parts_are_written_for_the_flow(tmp_path, monkeypatch):
     plan, _lines = pm_flow.build_plan(request())
     written = pm_flow.operation_parts(plan)
     keys = [part.key for part, _path in written]
-    assert keys[:6] == ["tool", "block", "toolpath", "feeds", "calculate", "block_size"]
-    assert keys[6:] == ["feeds_read", "computed"]         # чтения — в самом конце
+    assert keys[:6] == ["tool", "block", "toolpath", "block_check", "feeds",
+                        "calculate"]
+    assert keys[6:] == ["block_size", "feeds_read", "computed"]   # чтения — в конце
     for _part, path in written:
         assert path.exists() and path.parent == tmp_path
         assert path.name.startswith("pm_flow_")
@@ -238,3 +239,25 @@ def test_flow_stops_and_names_the_failed_part():
     assert "не дошёл до конца части" in text
     assert "окно сообщений самого PowerMill" in text
     assert "остальное уцелеет" in text
+
+
+def test_flow_explains_an_undefined_block_without_dying():
+    """Не определилась заготовка — поток объясняет, что нажать, и спрашивает.
+
+    Раньше это вылезало только на расчёте («заготовка не определена или
+    содержит неподходящие значения») — после того, как человек ждал весь поток.
+    """
+    text = Path(__file__).resolve().parent.parent.joinpath(
+        "scripts", "make_flow.py").read_text(encoding="utf-8")
+    assert "part.verify" in text
+    assert "Домой -> Заготовка -> «Вычислить» -> «Принять»" in text
+    assert "Попробовать расчёт всё равно?" in text
+    assert "continue" in text                     # можно пойти дальше по желанию
+
+
+def test_preview_mentions_the_block_is_calculated_and_accepted():
+    from src import pm_operation
+
+    plan = pm_operation.OperationPlan(toolpath_name="C", tool_name="D16")
+    text = "\n".join(pm_operation.preview(plan))
+    assert "Заготовка" in text

@@ -144,6 +144,7 @@ class MacroPart:
     lines: list[str]
     done: tuple[str, ...] | None = None   # чем считается «часть дошла до конца»
     reads: bool = False             # часть ТОЛЬКО читает свойства (для отчёта)
+    verify: bool = False            # часть-проверка ПЕРЕД опасным шагом
 
     def about(self) -> str:
         """Пояснение для вопросов/отчёта: что это за часть."""
@@ -217,7 +218,12 @@ def build_parts(plan: OperationPlan) -> list[MacroPart]:
     # ---------- 2. Заготовка ----------
     block_lines = [
         "// ---------- 2. Заготовка (Block) по модели ----------",
-        "EDIT TPPAGE SWBlock",
+        "// Ровно так, как записывает сам PowerMill (руководство по макросам):",
+        "//   FORM BLOCK -> EDIT BLOCK RESET -> BLOCK ACCEPT",
+        "// Без BLOCK ACCEPT заготовка остаётся НЕОПРЕДЕЛЁННОЙ, и расчёт падает",
+        "// с «заготовка не определена или содержит неподходящие значения» —",
+        "// именно это и случилось на живом PowerMill.",
+        "FORM BLOCK",
         "EDIT BLOCK COORDINATE WORLD",
         "EDIT BLOCK RESET",
         f'EDIT BLOCK RESETLIMIT "{_num(plan.tolerance)}"',
@@ -228,7 +234,8 @@ def build_parts(plan: OperationPlan) -> list[MacroPart]:
         # Размеры блока здесь НЕ читаем: свойства $Block.XLength не существует
         # (на живом PowerMill это останавливало весь макрос). Размеры — в
         # последней части, чтобы ошибка чтения ничего не стоила.
-        f'STRING $pm_block = "{STEP_MARK}block;ok;заготовка сброшена по модели"',
+        "BLOCK ACCEPT",
+        f'STRING $pm_block = "{STEP_MARK}block;ok;заготовка посчитана по модели и принята"',
         "FILE WRITE $pm_block TO {out}",
         "PRINT $pm_block",
     ]
@@ -245,6 +252,16 @@ def build_parts(plan: OperationPlan) -> list[MacroPart]:
         "STRING($pm_tp_after != $pm_tp_before)",
         "FILE WRITE $pm_tp_new TO {out}",
         "PRINT $pm_tp_new",
+        # Заготовка внутри стратегии: окно стратегии уже открыто (его открыл
+        # IMPORT TEMPLATE), поэтому страница Block и сброс блока работают —
+        # так же, как в рабочих макросах Autodesk. Без этого заготовка
+        # траектории остаётся неопределённой, и расчёт не пойдёт.
+        "",
+        "// ---------- 3б. Заготовка внутри стратегии ----------",
+        "EDIT TPPAGE SWBlock",
+        "EDIT BLOCK COORDINATE WORLD",
+        "EDIT BLOCK RESET",
+        f'EDIT BLOCK RESETLIMIT "{_num(plan.tolerance)}"',
         "",
         "// ---------- 4. Параметры стратегии ----------",
         "EDIT TPPAGE SWAreaClearance",
@@ -279,6 +296,22 @@ def build_parts(plan: OperationPlan) -> list[MacroPart]:
     parts.append(MacroPart("toolpath", "Траектория и параметры",
                            ("toolpath", "params"), toolpath_lines,
                            done=("params", "toolpath")))
+
+    # ---------- 3в. Проверка заготовки: до расчёта, а не после ----------
+    # Единственная часть-проверка, которая стоит ДО опасного шага: если
+    # заготовка не определилась, лучше остановиться здесь с понятным текстом,
+    # чем получить от PowerMill «заготовка не определена» на расчёте.
+    parts.append(MacroPart(
+        "block_check", "Проверка заготовки (до расчёта)", ("block_check",),
+        [
+            "// ---------- 4. Определилась ли заготовка ----------",
+            f'STRING $pm_bchk = "{STEP_MARK}block_check;ok;" + '
+            "STRING($Block.Limits.XMax - $Block.Limits.XMin) + \";\" + "
+            "STRING($Block.Limits.YMax - $Block.Limits.YMin) + \";\" + "
+            "STRING($Block.Limits.ZMax - $Block.Limits.ZMin)",
+            "FILE WRITE $pm_bchk TO {out}",
+            "PRINT $pm_bchk",
+        ], reads=True, verify=True, done=("block_check",)))
 
     # ---------- 4. Режимы и имя траектории ----------
     # Внутри — ТОЛЬКО команды (без чтения свойств): команда, которую PowerMill
@@ -484,8 +517,8 @@ def preview(plan: OperationPlan) -> list[str]:
                      + " — сработавший попадёт в отчёт")
     else:
         lines.append(f"     взять из проекта: «{plan.tool_name}»")
-    lines.append(f"  2. Заготовка: сброс блока по модели "
-                 f"(припуск {_num(plan.thickness)}, допуск {_num(plan.tolerance)})")
+    lines.append(f"  2. Заготовка: посчитать по модели и принять "
+                 f"(BLOCK ACCEPT; допуск {_num(plan.tolerance)})")
     lines.append(f"  3. Траектория из шаблона: {plan.template}")
     lines.append(f"  4. Параметры: направление '{plan.cut_direction}', "
                  f"допуск {_num(plan.tolerance)}, припуск {_num(plan.thickness)}"

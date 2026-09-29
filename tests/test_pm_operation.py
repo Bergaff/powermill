@@ -208,12 +208,12 @@ def test_no_unverified_block_properties():
 
 def test_part_order_is_the_working_order():
     keys = [part.key for part in pm_operation.build_parts(make_plan(calculate=True))]
-    assert keys == ["tool", "block", "toolpath", "feeds", "calculate",
-                    "block_size", "feeds_read", "computed"]
+    assert keys == ["tool", "block", "toolpath", "block_check", "feeds",
+                    "calculate", "block_size", "feeds_read", "computed"]
     # без расчёта части «посчитана ли траектория» нет — проверять нечего
     without = [part.key for part in pm_operation.build_parts(make_plan())]
-    assert without == ["tool", "block", "toolpath", "feeds", "calculate",
-                       "block_size", "feeds_read"]
+    assert without == ["tool", "block", "toolpath", "block_check", "feeds",
+                       "calculate", "block_size", "feeds_read"]
 
 
 def test_reads_go_last_and_are_marked():
@@ -225,10 +225,17 @@ def test_reads_go_last_and_are_marked():
     """
     parts = pm_operation.build_parts(make_plan(calculate=True))
     reads = [part for part in parts if part.reads]
-    assert [part.key for part in reads] == ["block_size", "feeds_read", "computed"]
-    assert parts[-len(reads):] == reads
-    for part in parts[:-len(reads)]:
-        assert not part.reads, f"{part.key}: чтения должны быть в конце"
+    assert [part.key for part in reads] == ["block_check", "block_size",
+                                           "feeds_read", "computed"]
+    # проверка заготовки — единственное чтение ДО расчёта, и оно помечено verify:
+    # без неё расчёт падает непонятным «заготовка не определена»
+    verify = [part for part in parts if part.verify]
+    assert [part.key for part in verify] == ["block_check"]
+    assert parts.index(verify[0]) < [part.key for part in parts].index("calculate")
+    assert parts[-3:] == [part for part in parts if part.reads][1:]
+    for part in parts:
+        if part.reads:
+            continue
         for line in part.lines:
             assert "$Block.Limits" not in line
             assert "$toolpath." not in line
@@ -307,3 +314,42 @@ def test_big_macro_also_uses_its_own_handle():
 def test_operation_macro_still_passes_the_validator_after_handle_change():
     report = pml_vocab.validate(pm_operation.build_macro(make_plan()), VOCAB)
     assert report["ok"], pml_vocab.format_check(report)
+
+
+# --------------------------------------------------------------------------
+# Заготовка: без BLOCK ACCEPT она остаётся неопределённой
+# --------------------------------------------------------------------------
+def test_block_is_accepted_not_just_reset():
+    """Записанные команды PowerMill: FORM BLOCK -> EDIT BLOCK RESET -> BLOCK ACCEPT.
+
+    Без `BLOCK ACCEPT` заготовка не попадает в проект, и расчёт падает
+    «заготовка не определена или содержит неподходящие значения» — ровно это
+    и случилось на живом PowerMill.
+    """
+    text = pm_operation.build_macro(make_plan())
+    assert "FORM BLOCK" in text
+    assert text.index("FORM BLOCK") < text.index("EDIT BLOCK RESET")
+    assert text.index("EDIT BLOCK RESET") < text.index("BLOCK ACCEPT")
+    # прежняя ошибка: страница блока переключалась без открытого окна стратегии
+    assert "EDIT TPPAGE SWBlock" in text          # теперь только внутри стратегии
+
+
+def test_block_page_is_edited_inside_the_strategy_dialog():
+    """Сброс заготовки внутри окна стратегии — так делает рабочий макрос Autodesk."""
+    parts = pm_operation.build_parts(make_plan())
+    toolpath = next(part for part in parts if part.key == "toolpath")
+    lines = toolpath.lines
+    import_line = next(i for i, line in enumerate(lines)
+                       if line.startswith("IMPORT TEMPLATE ENTITY TOOLPATH"))
+    block_page = next(i for i, line in enumerate(lines)
+                      if line == "EDIT TPPAGE SWBlock")
+    assert import_line < block_page                # окно уже открыто импортом
+    assert "EDIT BLOCK RESET" in lines[block_page:block_page + 4]
+
+
+def test_block_check_is_a_separate_verified_part():
+    part = next(item for item in pm_operation.build_parts(make_plan())
+                if item.key == "block_check")
+    assert part.verify and part.reads
+    assert part.done == ("block_check",)
+    assert any("$Block.Limits" in line for line in part.lines)
