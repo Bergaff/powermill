@@ -32,6 +32,28 @@ try:  # pywin32 может быть не установлен — модуль �
 except Exception:  # noqa: BLE001
     _win32com = None
 
+
+def com_module():
+    """Модуль pywin32 — по требованию, а не один раз при импорте.
+
+    Зачем: pywin32 может быть поставлен **уже во время работы** (пункт 27 или
+    пункт 47 ставят его, не выходя из программы). Тогда кэш «один раз при
+    импорте» врал бы: «не установлен», хотя пакет уже на месте. Поэтому здесь
+    сбрасывается кэш поиска модулей (`pip` кладёт пакет в новую папку) и импорт
+    повторяется. Возвращает None, если пакета действительно нет.
+    """
+    global _win32com
+    if _win32com is None:
+        import importlib
+
+        importlib.invalidate_caches()
+        try:
+            import win32com.client as module  # type: ignore
+        except Exception:  # noqa: BLE001
+            return None
+        _win32com = module
+    return _win32com
+
 # Порядок важен: первый — то, что ответило на машине технолога
 PROGIDS = (
     "PowerMill.Application",
@@ -61,20 +83,31 @@ COMMAND_METHODS = ("DoCommand", "Execute", "DoCommandEx", "ExecuteEx")
 # Ограничение: больше этого числа объектов в раздел не тащим
 NAME_LIMIT = 500
 
+# Человеческие названия мостов — для печати в отчётах
+BRIDGE_TITLES = {"pywin32": "pywin32 (COM)", "pythonnet": "pythonnet (.NET)"}
+
 
 # --------------------------------------------------------------------------
 # Подключение
 # --------------------------------------------------------------------------
 def bridges() -> dict[str, bool]:
-    """Есть ли мосты Python (pythonnet / pywin32)."""
-    result: dict[str, bool] = {}
-    for module, title in (("clr", "pythonnet (.NET)"),
-                          ("win32com.client", "pywin32 (COM)")):
-        try:
-            __import__(module)
-            result[title] = True
-        except Exception:  # noqa: BLE001
-            result[title] = False
+    """Есть ли мосты Python: ключи — те имена, которые спрашивают снаружи.
+
+    Ключи именно `pywin32` и `pythonnet` (а не «pywin32 (COM)»): раньше здесь
+    были человеческие названия, а проверки в пунктах 41 и 47 спрашивали
+    `bridges.get("pywin32")` — всегда получался None, и отчёт врал «не
+    установлен» даже когда связь уже работала. Человеческие названия — в
+    `BRIDGE_TITLES`.
+    """
+    result = {"pywin32": com_module() is not None, "pythonnet": False}
+    try:
+        import importlib
+
+        importlib.invalidate_caches()
+        __import__("clr")
+        result["pythonnet"] = True
+    except Exception:  # noqa: BLE001
+        pass
     return result
 
 
@@ -84,12 +117,13 @@ def attach(progids: tuple[str, ...] = PROGIDS):
     Возвращает (объект, сообщение). Если PowerMill не запущен — объекта нет:
     запускать его сами не будем, это решение технолога.
     """
-    if _win32com is None:
+    module = com_module()
+    if module is None:
         import sys
 
         return None, (f"pywin32 не установлен в этом Python: {sys.executable}\n"
                       "   Поставить: пункт 27 меню (он ставит пакеты в тот же "
-                      "интерпретатор).")
+                      "интерпретатор) или пункт 47 — он поставит и сразу проверит.")
 
     # GetActiveObject присоединяется ТОЛЬКО к уже запущенной программе: если
     # PowerMill закрыт, он не откроется (в отличие от Dispatch). Поэтому
@@ -97,7 +131,7 @@ def attach(progids: tuple[str, ...] = PROGIDS):
     tried: list[str] = []
     for progid in progids:
         try:
-            app = _win32com.GetActiveObject(progid)
+            app = module.GetActiveObject(progid)
             return app, f"подключено к запущенному PowerMill через COM: {progid}"
         except Exception as error:  # noqa: BLE001
             tried.append(f"{progid}: {type(error).__name__}")

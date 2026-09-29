@@ -36,15 +36,32 @@ from src.console import Wizard, read_line                   # noqa: E402
 REPORT = OUTPUT_DIR / "pm_edit_report.txt"
 
 
+# Откуда взялись имена (для честного текста «почему писать некуда»)
+LIVE_EMPTY = "живой PowerMill (COM): траекторий в проекте нет"
+SNAPSHOT = "снимок проекта (пункт 24)"
+NOTHING = "ни живого PowerMill, ни снимка"
+
+
 def current_toolpaths() -> tuple[list[str], str]:
-    """Траектории проекта: живьём (если PowerMill открыт), иначе из снимка."""
+    """Траектории проекта: живьём (если PowerMill открыт), иначе из снимка.
+
+    Если PowerMill отвечает, но траекторий в проекте нет — так и говорим.
+    Раньше в этом случае сообщение было общим («нет ни живого PowerMill, ни
+    снимка»), и выходило, что программа врёт про связь, которая только что
+    подтвердилась, а причина на самом деле другая: проект пустой.
+    """
     session, _message = pm_com.connect()
     if session is not None:
         names = session.section_names("toolpaths")
         if names:
             return names, "живой PowerMill (COM)"
+        # Живому PowerMill верим больше, чем старому снимку: если он говорит
+        # «траекторий нет», снимок мог устареть.
+        return [], LIVE_EMPTY
     context = project_context.load() or {}
-    return list(context.get("toolpaths", [])), "снимок проекта (пункт 24)"
+    if context:
+        return list(context.get("toolpaths", [])), SNAPSHOT
+    return [], NOTHING
 
 
 def split_names(text: str) -> list[str]:
@@ -107,6 +124,11 @@ def main() -> int:
     if toolpaths:
         print(f"  Траектории ({source}): {', '.join(toolpaths[:12])}"
               + (" …" if len(toolpaths) > 12 else ""))
+    elif source == LIVE_EMPTY:
+        print("  (!) PowerMill отвечает, но в проекте пока НЕТ ни одной траектории.")
+        print("      Режимы писать некуда — сначала нужна траектория:")
+        print("      пункт 31 (собрать черновую: фреза + заготовка + траектория)")
+        print("      или пункт 37 («СДЕЛАЙ») — он сделает всё по шагам сам.")
     else:
         print("  (!) Траекторий не видно: нет ни живого PowerMill, ни снимка.")
         print("      Сначала пункт 24 (снимок проекта) — иначе непонятно, куда писать.")
@@ -156,7 +178,9 @@ def main() -> int:
     names = split_names(tp_answer) or toolpaths
     if not names:
         print("(!) Не названо ни одной траектории — писать некуда.")
-        print("    Сделай снимок проекта (пункт 24) и запусти пункт 30 снова.")
+        print("    Так бывает в двух случаях: проект пустой (тогда сначала")
+        print("    пункт 31 или 37 — они создадут фрезу, заготовку и траекторию)")
+        print("    или не сделан снимок проекта (пункт 24).")
         return 3
 
     plunge = None

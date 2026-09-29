@@ -196,3 +196,88 @@ def test_report_is_visible_where_reports_live():
     mcp = (PROJECT_ROOT / "src" / "mcp_server.py").read_text(encoding="utf-8")
     assert "pm_link_setup_report.txt" in mcp
     assert callable(show_reports.main)
+
+
+# --------------------------------------------------------------------------
+# Честность отчёта: «мост не установлен» и «траекторий не видно»
+# --------------------------------------------------------------------------
+def test_bridge_keys_are_the_names_callers_ask_for(monkeypatch):
+    """Ключи `pywin32`/`pythonnet`, а не человеческие названия.
+
+    Раньше `bridges()` отдавал «pywin32 (COM)», а проверки спрашивали
+    `bridges.get("pywin32")` — всегда None, и отчёт писал «мост не установлен»
+    при живом мосте (так и вышло на прогоне технолога).
+    """
+    from src import pm_com
+
+    monkeypatch.setattr(pm_com, "com_module", lambda: object())
+    available = pm_com.bridges()
+    assert set(available) == {"pywin32", "pythonnet"}
+    assert available["pywin32"] is True
+    assert pm_com.BRIDGE_TITLES["pywin32"] == "pywin32 (COM)"
+
+
+def test_com_module_is_imported_lazily_after_install(monkeypatch):
+    """pywin32 поставили во время работы — модуль обязан это заметить."""
+    import sys
+    import types
+
+    from src import pm_com
+
+    stub = types.ModuleType("win32com.client")
+    stub.GetActiveObject = lambda progid: ("app", progid)
+    monkeypatch.setitem(sys.modules, "win32com", types.ModuleType("win32com"))
+    monkeypatch.setitem(sys.modules, "win32com.client", stub)
+    monkeypatch.setattr(pm_com, "_win32com", None)
+    assert pm_com.com_module() is stub
+
+
+def test_installed_bridge_is_not_reported_as_missing(monkeypatch):
+    """Мост на месте, а PowerMill закрыт: совет «поставь пункт 27» — враньё."""
+    from src import link_check, pm_com
+
+    monkeypatch.setattr(pm_com, "bridges", lambda: {"pywin32": True, "pythonnet": False})
+    monkeypatch.setattr(pm_com, "connect", lambda: (None, "PowerMill не запущен"))
+    report = link_check.run(with_roundtrip=False)
+    text = report.format()
+    assert "не установлен" not in text
+    assert all("пункт 27" not in item for item in report.advice)
+
+
+def test_point_30_tells_an_empty_project_from_a_dead_link(monkeypatch):
+    """«Траекторий нет» и «PowerMill не отвечает» — разные причины и разные советы."""
+    from scripts import apply_cutting
+    from src import pm_com, project_context
+
+    class Session:
+        version = "2026000"
+
+        def section_names(self, section):
+            return []
+
+    monkeypatch.setattr(pm_com, "connect", lambda: (Session(), "подключён"))
+    monkeypatch.setattr(project_context, "load", lambda: {})
+    names, source = apply_cutting.current_toolpaths()
+    assert names == []
+    assert source == apply_cutting.LIVE_EMPTY
+
+    # живому PowerMill верим больше, чем старому снимку
+    monkeypatch.setattr(project_context, "load", lambda: {"toolpaths": ["Старый_снимок"]})
+    names, source = apply_cutting.current_toolpaths()
+    assert names == [] and source == apply_cutting.LIVE_EMPTY
+
+    # а без живого PowerMill снимок — законный источник
+    monkeypatch.setattr(pm_com, "connect", lambda: (None, "PowerMill не запущен"))
+    names, source = apply_cutting.current_toolpaths()
+    assert names == ["Старый_снимок"] and source == apply_cutting.SNAPSHOT
+
+    # и когда нет вообще ничего — так и говорим
+    monkeypatch.setattr(project_context, "load", lambda: {})
+    names, source = apply_cutting.current_toolpaths()
+    assert names == [] and source == apply_cutting.NOTHING
+
+
+def test_point_30_explains_empty_project_with_next_steps():
+    text = (PROJECT_ROOT / "scripts" / "apply_cutting.py").read_text(encoding="utf-8")
+    assert "PowerMill отвечает, но в проекте пока НЕТ" in text
+    assert "пункт 31" in text and "пункт 37" in text
