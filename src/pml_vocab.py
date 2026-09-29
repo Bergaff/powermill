@@ -55,6 +55,8 @@ UNDRAW REAPPLYFROMGUI SPIRAL
 COLLISION GOUGE SHANK_CLEARANCE HOLDER_CLEARANCE SPLIT_TOOLPATH ADJUST_TOOL
 APPLY TYPE DEPTH ENTITY_EXISTS
 KEEP TAPEOPTIONS FILENAME ITEM COMPONENT NCSELECTED FIXTUREOFFSET INSERT
+FILEOPEN NCTOOLPATH NCPREFERENCES PREFERENCES OPTIONFILE
+SHANK_CLEAR SHANK_COMPONENT HOLDER_CLEAR HOLDER_COMPONENT LOWERDIA UPPERDIA LENGTH
 YES NO
 """.split())
 # RPM / FRATE / PRATE / RSPEED / TPPAGE / PAR — слова команды EDIT из рабочего
@@ -74,6 +76,15 @@ YES NO
 # NCPROGRAM ;) — из рабочих макросов «Macro to create NC code».
 # YES/NO — ответы макроса на вопрос PowerMill (в рабочих макросах Autodesk
 # строка YES идёт сразу за `ACTIVATE NCPROGRAM … KEEP NCPROGRAM ;`).
+# SHANK_CLEAR/SHANK_COMPONENT/HOLDER_CLEAR/HOLDER_COMPONENT/LOWERDIA/UPPERDIA/
+# LENGTH — державка фрезы: без хвостовика и патрона PowerMill отказывается считать
+# столкновения («не заданы ни хвостовик ни патрон» на живом PowerMill 2026).
+# Команды — из рабочего макроса Autodesk («Holder connection», форум 6706341):
+#   EDIT TOOL $tool SHANK_COMPONENT ADD / LOWERDIA / UPPERDIA
+#   EDIT TOOL $tool HOLDER_CLEAR / HOLDER_COMPONENT ADD / UPPERDIA / LENGTH
+# FILEOPEN/NCTOOLPATH/NCPREFERENCES/PREFERENCES/OPTIONFILE — установка
+# постпроцессора и вывод NC (рабочие макросы Autodesk по выводу NC-программ:
+# EDIT NCPROGRAM … TAPEOPTIONS FILEOPEN, NCSELECTED APPLY/ACCEPT, NCTOOLPATH ACCEPT).
 # BLOCK — заготовка PowerMill: `EDIT BLOCK RESET`, `EDIT BLOCK RESETLIMIT`,
 # `EDIT BLOCK ZMAX` — из рабочих макросов форума Autodesk.
 # FORM BLOCK и BLOCK ACCEPT — записанные команды самого PowerMill: в руководстве

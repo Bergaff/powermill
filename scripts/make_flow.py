@@ -419,8 +419,10 @@ def main() -> int:
             filename=pm_nc.default_filename(request.project_folder, request.nc_name),
             overwrite=any(p.lower() == request.nc_name.lower() for p in programs),
         )
-        nc_macro = None if nc_plan is None else pm_nc.write_macro(nc_plan,
-                                                                  known_programs=programs)
+        # Способ установки поста — тот, что сработал в пункте 36 (если он его
+        # уже нашёл): угадывать заново на каждом запуске незачем.
+        nc_macro = None if nc_plan is None else pm_nc.write_macro(
+            nc_plan, known_programs=programs, form=pm_nc.saved_form())
         before = time.time()
         ok, note = (False, "нет постпроцессора") if nc_macro is None else run_macro(nc_macro)
         if nc_macro is None:

@@ -79,8 +79,9 @@ def test_live_powermill_state_read(env, monkeypatch):
 def test_wizard_creates_tool_and_writes_report(env, monkeypatch):
     session = FakeSession()
     monkeypatch.setattr(probe_tool.pm_com, "connect", lambda: (session, "ok"))
-    # имя (Enter = D16_Freza), диаметр (Enter = 16), подтверждение «да»
-    scripted(monkeypatch, ["", "", "да"])
+    # имя (Enter = D16_Freza), диаметр (Enter = 16), державка (Enter = да),
+    # подтверждение «да»
+    scripted(monkeypatch, ["", "", "", "да"])
 
     assert probe_tool.main() == 0
 
@@ -94,7 +95,7 @@ def test_wizard_creates_tool_and_writes_report(env, monkeypatch):
 def test_wizard_does_nothing_without_confirmation(env, monkeypatch):
     session = FakeSession()
     monkeypatch.setattr(probe_tool.pm_com, "connect", lambda: (session, "ok"))
-    scripted(monkeypatch, ["", "", "нет"])
+    scripted(monkeypatch, ["", "", "", "нет"])
 
     assert probe_tool.main() == 0
     assert session.commands == []                    # проект не тронут
@@ -114,7 +115,7 @@ def test_wizard_back_returns_to_menu(env, monkeypatch):
 def test_wizard_uses_existing_tool(env, monkeypatch):
     session = FakeSession(tools=["D16_Freza"])
     monkeypatch.setattr(probe_tool.pm_com, "connect", lambda: (session, "ok"))
-    scripted(monkeypatch, ["D16_Freza", "16", "да"])
+    scripted(monkeypatch, ["D16_Freza", "16", "", "да"])
 
     assert probe_tool.main() == 0
     assert session.tools == ["D16_Freza"]
@@ -143,8 +144,50 @@ def test_ask_yes_no_returns_none_on_exit(monkeypatch):
 def test_bad_diameter_falls_back_to_16(env, monkeypatch):
     session = FakeSession()
     monkeypatch.setattr(probe_tool.pm_com, "connect", lambda: (session, "ok"))
-    scripted(monkeypatch, ["", "шестнадцать", "да"])
+    scripted(monkeypatch, ["", "шестнадцать", "", "да"])
 
     assert probe_tool.main() == 0
     text = probe_tool.REPORT_FILE.read_text(encoding="utf-8")
     assert "DIAMETER 16" in text
+
+
+def test_wizard_sets_the_holder_so_collision_check_can_work(env, monkeypatch):
+    """Без хвостовика и патрона PowerMill не считает столкновения (пункт 35)."""
+    from src import pm_holder
+    monkeypatch.setattr(pm_holder, "SPEC_FILE", env / "holder_defaults.json")
+    session = FakeSession()
+    monkeypatch.setattr(probe_tool.pm_com, "connect", lambda: (session, "ok"))
+    scripted(monkeypatch, ["", "", "", "да"])
+
+    assert probe_tool.main() == 0
+
+    sent = "\n".join(session.commands)
+    assert "SHANK_COMPONENT ADD" in sent
+    assert "HOLDER_COMPONENT ADD" in sent
+    assert "HOLDER_COMPONENT LOWERDIA 40" in sent
+    assert pm_holder.load_saved() is not None                 # размеры запомнены
+    text = probe_tool.REPORT_FILE.read_text(encoding="utf-8")
+    assert "условная державка" in text
+
+
+def test_wizard_does_not_touch_the_holder_when_asked(env, monkeypatch):
+    session = FakeSession()
+    monkeypatch.setattr(probe_tool.pm_com, "connect", lambda: (session, "ok"))
+    scripted(monkeypatch, ["", "", "нет", "да"])
+
+    assert probe_tool.main() == 0
+    assert not any("COMPONENT" in command for command in session.commands)
+
+
+def test_holder_defaults_follow_the_tool_diameter(env, monkeypatch):
+    """Для D8 хвостовик — 8, а не 16: размеры берём из диаметра фрезы."""
+    from src import pm_holder
+    monkeypatch.setattr(pm_holder, "SPEC_FILE", env / "holder_defaults.json")
+    session = FakeSession()
+    monkeypatch.setattr(probe_tool.pm_com, "connect", lambda: (session, "ok"))
+    scripted(monkeypatch, ["D8_Freza", "8", "", "да"])
+
+    assert probe_tool.main() == 0
+    sent = "\n".join(session.commands)
+    assert "SHANK_COMPONENT LOWERDIA 8" in sent
+    assert pm_holder.load_saved().shank_diameter == 8

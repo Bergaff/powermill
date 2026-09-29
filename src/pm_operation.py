@@ -67,7 +67,7 @@
 """
 from __future__ import annotations
 
-from src import pml_files
+from src import pm_holder, pml_files
 
 import time
 from dataclasses import dataclass
@@ -121,6 +121,8 @@ class OperationPlan:
     plunge: int | None = None
     block_z_max: float | None = None  # верх заготовки, мм (None — по модели)
     calculate: bool = False           # расчёт — только по подтверждению
+    make_holder: bool = True          # задать условные хвостовик и патрон
+    holder: pm_holder.HolderSpec | None = None  # размеры (None — по диаметру)
 
 
 def _num(value: float) -> str:
@@ -165,6 +167,21 @@ def build_parts(plan: OperationPlan) -> list[MacroPart]:
     parts: list[MacroPart] = []
 
     # ---------- 1. Инструмент ----------
+    # Державка: без неё PowerMill отказывается считать столкновения («не заданы
+    # ни хвостовик ни патрон») — на этом живой прогон пункта 35 и остановился.
+    # Задаём условную (два цилиндра) прямо при создании фрезы; заменяется своей
+    # державкой в PowerMill в любой момент.
+    spec = plan.holder or pm_holder.HolderSpec.for_tool(plan.tool_diameter)
+    holder_lines: list[str] = []
+    if plan.make_holder:
+        holder_lines = ["    // ---------- 1б. Державка (условная: хвостовик и патрон) ----------"]
+        holder_lines += ["    " + line for line in spec.lines("$Tool", quote=False)]
+        holder_lines += [
+            f'    STRING $pm_holder = "{STEP_MARK}holder;ok;{spec.describe_ascii()}"',
+            "    FILE WRITE $pm_holder TO {out}",
+            "    PRINT $pm_holder",
+        ]
+    holder_block = "\n".join(holder_lines)
     tool_lines = ["// ---------- 1. Инструмент ----------", "EDIT TPPAGE TOOL"]
     if plan.create_tool:
         tool_lines += [
@@ -201,6 +218,7 @@ def build_parts(plan: OperationPlan) -> list[MacroPart]:
             "STRING($Tool.Diameter)",
             "    FILE WRITE $pm_tool_name TO {out}",
             "    PRINT $pm_tool_name",
+            holder_block,
             "}",
         ]
     else:
@@ -211,8 +229,10 @@ def build_parts(plan: OperationPlan) -> list[MacroPart]:
             "FILE WRITE $pm_tool_act TO {out}",
             "PRINT $pm_tool_act",
         ]
-    parts.append(MacroPart("tool", "Инструмент", ("tool_create", "tool_name",
-                                                  "tool_active"), tool_lines,
+    markers = ("tool_create", "tool_name", "tool_active")
+    if plan.make_holder:
+        markers = markers + ("holder",)
+    parts.append(MacroPart("tool", "Инструмент", markers, tool_lines,
                            done=("tool_name", "tool_active", "tool_create")))
 
     # ---------- 2. Заготовка ----------
@@ -517,6 +537,10 @@ def preview(plan: OperationPlan) -> list[str]:
                      + " — сработавший попадёт в отчёт")
     else:
         lines.append(f"     взять из проекта: «{plan.tool_name}»")
+    if plan.create_tool and plan.make_holder:
+        spec = plan.holder or pm_holder.HolderSpec.for_tool(plan.tool_diameter)
+        lines.append(f"     + державка условная: {spec.describe()} "
+                     "(без неё PowerMill не считает столкновения — п. 35)")
     lines.append(f"  2. Заготовка: посчитать по модели и принять "
                  f"(BLOCK ACCEPT; допуск {_num(plan.tolerance)})")
     lines.append(f"  3. Траектория из шаблона: {plan.template}")
@@ -565,6 +589,7 @@ STEP_TITLES = {
     "tool_create": "Создание инструмента",
     "tool_name": "Параметры инструмента",
     "tool_active": "Выбор инструмента из проекта",
+    "holder": "Державка (хвостовик и патрон)",
     "block": "Заготовка (Block)",
     "block_size": "Размеры заготовки",
     "toolpath": "Траектория из шаблона",

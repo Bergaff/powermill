@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from config import OUTPUT_DIR                          # noqa: E402
-from src import pm_check, pm_com                        # noqa: E402
+from src import pm_check, pm_com, pm_holder            # noqa: E402
 from src.applog import start_log                        # noqa: E402
 from src.console import Wizard, read_line               # noqa: E402
 
@@ -46,6 +46,16 @@ def live_toolpaths() -> tuple[list[str], str]:
     return [], message
 
 
+def live_tools(session) -> list[str]:
+    """Имена фрез проекта (пусто — если прочитать не удалось)."""
+    if session is None:
+        return []
+    try:
+        return session.section_names("tools")
+    except Exception:                                      # noqa: BLE001
+        return []
+
+
 def wait_for_result(before: float, timeout: float = 180.0) -> bool:
     """Ждём файл отчёта: проверки коллизий могут идти долго — до 3 минут."""
     deadline = time.time() + timeout
@@ -68,8 +78,11 @@ def main() -> int:
     print()
 
     toolpaths, source = live_toolpaths()
+    session, _message = pm_com.connect()
+    tools = live_tools(session)
     print(f"  Проект: {source}")
     print(f"    траектории: {', '.join(toolpaths) if toolpaths else '— не видно'}")
+    print(f"    фрезы: {', '.join(tools) if tools else '— не видно'}")
     print()
 
     if "живой" not in source:
@@ -88,12 +101,22 @@ def main() -> int:
         print(pm_check.format_result(saved[0]))
         print()
 
+    saved_spec = pm_holder.load_saved()
+    default_tool = tools[0] if len(tools) == 1 else (tools[0] if tools else "")
+    default_dia = saved_spec.shank_diameter if saved_spec else 16.0
     steps = [
         ("Траектории для проверки",
          "через запятую; Enter — все из проекта",
          ", ".join(toolpaths)),
+        ("Фреза (для державки)",
+         "имя фрезы; Enter — " + (default_tool or "как в проекте"), default_tool),
         ("Зазор державки, мм", "Enter — 0.1", "0.1"),
         ("Зазор хвостовика, мм", "Enter — 0.1", "0.1"),
+        ("Задать условные хвостовик и патрон?",
+         "нужны для проверки столкновений; Enter — да, «нет» — не трогать фрезу",
+         "да"),
+        ("Диаметр фрезы для условной державки, мм", "Enter — " + f"{default_dia:g}",
+         f"{default_dia:g}"),
     ]
     wizard = Wizard(steps)
     while not wizard.finished:
@@ -120,11 +143,17 @@ def main() -> int:
             print(f"  (!) «{value}» — не число, беру {fallback:g}")
             return fallback
 
+    tool_name = (wizard.answers[1] or "").strip()
     plan = pm_check.CheckPlan(
         toolpaths=chosen,
-        holder_clearance=number(wizard.answers[1], 0.1),
-        shank_clearance=number(wizard.answers[2], 0.1),
+        holder_clearance=number(wizard.answers[2], 0.1),
+        shank_clearance=number(wizard.answers[3], 0.1),
     )
+    make_holder = (wizard.answers[4] or "").strip().lower() not in ("нет", "н", "no", "n", "0")
+    tool_diameter = number(wizard.answers[5], 16.0)
+    spec = pm_holder.load_saved() if saved_spec else pm_holder.HolderSpec.for_tool(tool_diameter)
+    if spec is None or abs(spec.shank_diameter - tool_diameter) > 0.001:
+        spec = pm_holder.HolderSpec.for_tool(tool_diameter)
 
     problems = pm_check.validate_plan(plan)
     if problems:
@@ -139,8 +168,12 @@ def main() -> int:
     print("\n".join(pm_check.preview(plan)))
     print()
     print("  Проверки PowerMill могут идти долго на сложных траекториях.")
-    print("  (!) Державка (патрон/цанга) у созданных нами фресок не задаётся:")
-    print("      столкновения державки проверить нечем — только саму фрезу.")
+    if make_holder:
+        print(f"  Державка: задам фрезе «{tool_name or '?'}» условную "
+              f"({spec.describe_ascii()}) — иначе PowerMill не считает столкновения.")
+    else:
+        print("  Державку не трогаю: если у фрезы её нет, PowerMill откажется")
+        print("  считать столкновения — тогда проверю хотя бы зарезы.")
     print()
 
     answer = ask_yes_no("  Запустить проверки сейчас? (да/нет) [нет]: ")
@@ -148,14 +181,50 @@ def main() -> int:
         print("Ничего не менял.")
         return 0
 
-    macro = pm_check.write_macro(plan)
-    print()
-    print(f"  Макрос проверок: {macro}")
-
-    session, _message = pm_com.connect()
+    # ---- державка: без неё PowerMill отказывается считать столкновения ----
+    holder_report = None
+    if session is None:
+        session, _message = pm_com.connect()
     if session is None:
         print("  (!) PowerMill пропал — подключение потеряно.")
         return 1
+
+    if make_holder and tool_name:
+        print()
+        print(f"  Задаю условную державку фрезе «{tool_name}»: {spec.describe_ascii()}")
+        print("  (это два цилиндра для проверки столкновений — свою державку "
+              "из базы ставь в PowerMill)")
+        holder_report = pm_holder.apply_live(session, tool_name, spec, log=print)
+        if holder_report.ok:
+            pm_holder.save_spec(spec)
+            plan.assumed_holder = True
+            plan.holder_text = spec.describe()
+        else:
+            print(holder_report.format())
+    elif not tool_name:
+        print("  (!) Фреза не названа — державку не задаю.")
+
+    # ---- пробный прогон: PowerMill не должен рушить макрос ----
+    print()
+    print("  Пробую проверку столкновений на одной траектории (через COM)…")
+    probe_ok, probe_note = pm_check.probe_collision(session, chosen[0], plan, log=print)
+    if probe_ok:
+        print("  Столкновения проверять можно.")
+    elif pm_check.collision_refusal(probe_note):
+        plan.collision = False
+        plan.collision_off_reason = probe_note
+        print(f"  (!) Столкновения проверить нечем: {probe_note}")
+        print("      Столкновения из проверки убираю — иначе PowerMill остановит "
+              "весь макрос и отчёта не будет.")
+        print("      Зарезы всё равно проверим.")
+    else:
+        print(f"  (!) Пробный запуск не прошёл: {probe_note}")
+        print("      Оставляю проверку столкновений в макросе, но если PowerMill "
+              "остановится — пришли отчёт и трейсы.")
+
+    macro = pm_check.write_macro(plan)
+    print()
+    print(f"  Макрос проверок: {macro}")
 
     before = time.time()
     command = f'MACRO "{str(macro).replace(chr(92), "/")}"'
@@ -176,6 +245,8 @@ def main() -> int:
     _all_ok, summary = pm_check.summarize(steps_result)
     body = ["Проверки траекторий (шаг 3.4, пункт 35)", "", text, "", *summary,
             *pm_check.not_checked_lines(plan)]
+    if holder_report is not None:
+        body += ["", *holder_report.format().splitlines()]
     if not got:
         body.append("")
         body.append("Отчёт от макроса не появился — значит макрос остановился или "

@@ -61,6 +61,9 @@ class CheckPlan:
     shank_clearance: float = 0.1            # мм
     read_status: bool = True                # читать Safety-статусы (рискованно)
     result_file: Path = RESULT_FILE
+    assumed_holder: bool = False            # столкновения считались с УСЛОВНОЙ державкой
+    holder_text: str = ""                   # её описание (хвостовик/патрон)
+    collision_off_reason: str = ""          # почему столкновения не проверяем
 
 
 STEP_MARK = "CHK;"
@@ -258,6 +261,79 @@ def build_macro(plan: CheckPlan) -> str:
     return pml_files.unique_handles("\n".join(lines)) + "\n"
 
 
+# Слова, по которым видно, что PowerMill отказался считать столкновения
+# именно из-за незаданной державки/хвостовика (ответ приходит на русском или
+# английском — PowerMill у технолога русский, но запасной язык не помешает).
+NO_HOLDER_WORDS = (
+    "не задан", "не заданы", "не определён", "не определен",
+    "not defined", "not set", "no holder", "missing holder",
+    "должен быть задан", "must be specified",
+)
+
+
+def _answer_part(note: str) -> str:
+    """Ответ PowerMill из строки отчёта `session.execute` (без самой команды).
+
+    Иначе «хвостовик» находился бы прямо в тексте команды
+    `EDIT COLLISION SHANK_CLEARANCE …` — и мы бы врали сами себе.
+    """
+    text = note or ""
+    marker = "ответ:"
+    if marker in text:
+        text = text.split(marker, 1)[1]
+    low = text.lower()
+    for tail in (" | ранее:", "-> ok"):
+        low = low.split(tail, 1)[0]
+    return low
+
+
+def collision_refusal(note: str) -> bool:
+    """Похоже ли, что PowerMill отказался считать из-за незаданной державки."""
+    answer = _answer_part(note)
+    if not answer:
+        return False
+    return any(word in answer for word in NO_HOLDER_WORDS)
+
+
+def probe_collision(session, toolpath: str, plan: CheckPlan | None = None,
+                    log=None) -> tuple[bool, str]:
+    """Пробный запуск проверки столкновений на одной траектории.
+
+    Зачем пробовать: PowerMill **останавливает макрос** на первой неверной
+    команде. Если у фрезы нет хвостовика и патрона, `EDIT COLLISION APPLY`
+    валит весь макрос проверок — и вместо отчёта получается окно ошибки. Через
+    COM та же команда не рушит ничего: мы видим ответ PowerMill и решаем, можно
+    ли включать проверку столкновений в макрос.
+
+    Возвращает (можно_ли_считать_столкновения, пояснение).
+    """
+    say = log or (lambda _text: None)
+    settings = plan or CheckPlan()
+    safe = (toolpath or "").replace("'", "''")
+    for command in ("DIALOGS MESSAGE OFF", "DIALOGS ERROR OFF"):
+        session.execute(command)
+    try:
+        commands = [
+            f"ACTIVATE TOOLPATH '{safe}'",
+            "EDIT COLLISION TYPE COLLISION",
+            f'EDIT COLLISION HOLDER_CLEARANCE "{_num(settings.holder_clearance)}"',
+            f'EDIT COLLISION SHANK_CLEARANCE "{_num(settings.shank_clearance)}"',
+            "EDIT COLLISION APPLY",
+        ]
+        for command in commands:
+            ok, note = session.execute(command)
+            say(f"   {command}: " + ("ок" if ok else "ошибка"))
+            if not ok:
+                return False, f"PowerMill не принял «{command}»: {note[:200]}"
+            if collision_refusal(note):
+                answer = _answer_part(note).strip() or "не заданы хвостовик и патрон"
+                return False, f"PowerMill отказался считать столкновения: {answer[:200]}"
+    finally:
+        for command in ("DIALOGS ERROR ON", "DIALOGS MESSAGE ON"):
+            session.execute(command)
+    return True, "пробный запуск проверки столкновений прошёл"
+
+
 def write_macro(plan: CheckPlan, path: Path | str = MACRO_FILE) -> Path:
     """Пишет макрос проверок (CP1251, CRLF — как читает PowerMill)."""
     target = Path(path)
@@ -380,13 +456,24 @@ def not_checked_lines(plan: CheckPlan) -> list[str]:
         "    пробный прогон и технолог всё равно нужны;",
     ]
     if plan.collision:
-        lines += [
-            "  • державка (патрон и цанга): PowerMill проверяет только то, что задано",
-            "    у фрезы. Пункт 33/37 создаёт фрезу БЕЗ патрона и цанги — у такой",
-            "    фрезы столкновение державки поймать нечем. Задай державку в",
-            "    PowerMill (вкладка инструмента → Holder) или скажи — добавим её",
-            "    в создание фрезы;",
-        ]
+        if plan.assumed_holder:
+            lines += [
+                "  • столкновения считались с УСЛОВНОЙ державкой "
+                f"({plan.holder_text or 'два цилиндра'}):",
+                "    это простые цилиндры, а не твоя реальная оснастка. Грубые случаи",
+                "    («патрон лезет в заготовку») видно, а тонкие — нет. Поставь свою",
+                "    державку в PowerMill (вкладка инструмента → Holder) и повтори;",
+            ]
+        else:
+            lines += [
+                "  • державка (патрон и цанга): PowerMill проверяет только то, что задано",
+                "    у фрезы. Пункт 33/37 создаёт фрезу БЕЗ патрона и цанги — у такой",
+                "    фрезы столкновение державки поймать нечем. Задай державку в",
+                "    PowerMill (вкладка инструмента → Holder) или скажи — добавим её",
+                "    в создание фрезы;",
+            ]
+    if plan.collision_off_reason:
+        lines.append(f"  • столкновения не проверялись: {plan.collision_off_reason}")
     if plan.read_status:
         lines.append("  • статус безопасности читается как свойство траектории: если "
                      "PowerMill его не отдал, будет честное «не прочитано».")

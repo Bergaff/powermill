@@ -53,7 +53,22 @@ def test_macro_sets_filename_and_postprocessor():
     code = pm_nc.build_macro(plan(filename=Path("E:/nc/part.tap"),
                                   postprocessor=Path("E:/post/fanuc.pmoptz")))
     assert "EDIT NCPROGRAM 'PROGRAM1' FILENAME 'E:/nc/part.tap'" in code
+    # по умолчанию — самый проверенный способ (сначала FILEOPEN, потом APPLY/ACCEPT)
+    assert "ACTIVATE NCPROGRAM 'PROGRAM1'" in code
+    assert ("EDIT NCPROGRAM SELECTED TAPEOPTIONS FILEOPEN 'E:/post/fanuc.pmoptz'"
+            in code)
+    assert "NCSELECTED ACCEPT" in code
+
+
+def test_macro_uses_the_told_tape_form():
+    """Пункт 36 подставляет способ, который сработал (или очередной на пробу)."""
+    plain = pm_nc.form_by_key("plain")
+    assert plain is not None
+    code = pm_nc.build_macro(plan(postprocessor=Path("E:/post/fanuc.pmoptz")),
+                             form=plain)
     assert "EDIT NCPROGRAM 'PROGRAM1' TAPEOPTIONS 'E:/post/fanuc.pmoptz'" in code
+    assert "NCSELECTED ACCEPT" not in code
+    assert "NC;tape_form;info;plain" in code
 
 
 def test_macro_refuses_to_overwrite_existing_program():
@@ -265,7 +280,8 @@ def test_macro_checks_the_postprocessor_file_before_writing(tmp_path):
     assert "NC;postprocessor;fail;" in code
     assert '$pm_ok = "no"' in code                 # и НЕ выводим файл вслепую
     # команда ставится литералом пути: так делают рабочие макросы Autodesk
-    assert f"EDIT NCPROGRAM 'PROGRAM1' TAPEOPTIONS '{str(post).replace(chr(92), '/')}'" in code
+    literal = str(post).replace(chr(92), "/")
+    assert f"EDIT NCPROGRAM SELECTED TAPEOPTIONS FILEOPEN '{literal}'" in code
 
 
 def test_macro_without_postprocessor_has_no_check():
@@ -309,3 +325,42 @@ def test_post_hints_explain_known_posts_and_stay_quiet_about_unknown():
     assert "Fanuc" in hints[0] and "распростран" in hints[0]
     assert hints[1] == ""                          # не знаем — не выдумываем
     assert "Heidenhain" in hints[2]
+
+
+# --------------------------------------------------------------------------
+# Цепочка способов задать постпроцессор (пункт 36 перебирает их сам)
+# --------------------------------------------------------------------------
+def test_attempt_order_starts_with_saved_form(monkeypatch, tmp_path):
+    monkeypatch.setattr(pm_nc, "TAPE_FILE", tmp_path / "tape_option_form.txt")
+    assert pm_nc.saved_form() is None
+    order = pm_nc.attempt_order()
+    assert [form.key for form in order] == [form.key for form in pm_nc.TAPE_FORMS]
+
+    pm_nc.remember_form("selected_plain")
+    assert pm_nc.saved_form().key == "selected_plain"
+    order = pm_nc.attempt_order()
+    assert order[0].key == "selected_plain"
+    assert len(order) == len(pm_nc.TAPE_FORMS)          # каждый способ — один раз
+
+
+def test_remember_form_ignores_the_comment_line(monkeypatch, tmp_path):
+    monkeypatch.setattr(pm_nc, "TAPE_FILE", tmp_path / "tape_option_form.txt")
+    pm_nc.remember_form("fileopen_accept")
+    from src import pml_files
+    text = pml_files.read(tmp_path / "tape_option_form.txt")   # файл в CP1251
+    assert text.splitlines()[0].startswith("#")          # пояснение — не способ
+    assert pm_nc.saved_form().key == "fileopen_accept"
+
+
+def test_known_bad_form_is_still_tried_last(monkeypatch, tmp_path):
+    """Короткая форма у технолога не сработала — она в самом конце, но есть."""
+    monkeypatch.setattr(pm_nc, "TAPE_FILE", tmp_path / "tape_option_form.txt")
+    order = [form.key for form in pm_nc.attempt_order()]
+    assert order[-1] == "plain"
+    assert order[0] == pm_nc.DEFAULT_FORM
+
+
+def test_macro_silences_dialogs_so_a_failed_step_does_not_block():
+    code = pm_nc.build_macro(plan(postprocessor=Path("E:/post/fanuc.pmoptz")))
+    assert "DIALOGS MESSAGE OFF" in code and "DIALOGS ERROR OFF" in code
+    assert "DIALOGS ERROR ON" in code                    # и возвращаем как было

@@ -27,7 +27,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from config import OUTPUT_DIR                          # noqa: E402
-from src import pm_com, pm_tool                         # noqa: E402
+from src import pm_com, pm_holder, pm_tool                         # noqa: E402
 from src.applog import start_log                        # noqa: E402
 from src.console import Wizard, read_line               # noqa: E402
 
@@ -91,6 +91,8 @@ def main() -> int:
     steps = [
         ("Имя фрезы", "как она будет называться в проекте", "D16_Freza"),
         ("Диаметр, мм", "Enter — 16", "16"),
+        ("Задать условные хвостовик и патрон?",
+         "нужны для проверки столкновений (пункт 35); Enter — да", "да"),
     ]
     wizard = Wizard(steps)
     while not wizard.finished:
@@ -113,6 +115,12 @@ def main() -> int:
     except ValueError:
         print(f"  (!) «{diameter_text}» — не число, беру 16 мм.")
         diameter = 16.0
+    make_holder = (wizard.answers[2] or "").strip().lower() not in ("нет", "н", "no", "n", "0")
+    saved_spec = pm_holder.load_saved()
+    if saved_spec is not None and abs(saved_spec.shank_diameter - diameter) <= 0.001:
+        spec = saved_spec
+    else:
+        spec = pm_holder.HolderSpec.for_tool(diameter)
 
     print("=" * 64)
     print("  ЧТО БУДЕТ СДЕЛАНО (до выполнения)")
@@ -123,7 +131,12 @@ def main() -> int:
     print(f"  3) настрою её: EDIT TOOL ; DIAMETER {diameter:g}, "
           "EDIT TOOL ; NUMBER COMMANDFROMUI 1")
     print(f"  4) переименую: RENAME Tool ; '{name}'")
-    print("  5) запишу отчёт и запомню сработавшее слово для пункта 31")
+    if make_holder:
+        print(f"  5) задам державку: {spec.describe_ascii()} "
+              "(условную — для проверки столкновений)")
+    else:
+        print("  5) державку не трогаю")
+    print("  6) запишу отчёт и запомню сработавшее слово для пункта 31")
     print()
     print("  Это меняет проект — работай на копии (её делает пункт 31).")
     print("  Если PowerMill всё же покажет окно с ошибкой, нажми в нём ОК:")
@@ -144,8 +157,17 @@ def main() -> int:
 
     report = pm_tool.create_flat_tool(session, name=name, diameter=diameter,
                                       log=lambda text: print(f"   {text}"))
+    holder_report = None
+    if make_holder and report.ok:
+        print()
+        print(f"  Задаю условную державку: {spec.describe_ascii()}")
+        holder_report = pm_holder.apply_live(session, name, spec, log=lambda text: print(f"   {text}"))
+        if holder_report.ok:
+            pm_holder.save_spec(spec)
     print()
     text = report.format()
+    if holder_report is not None:
+        text = text + "\n\n" + holder_report.format()
     print(text)
     REPORT_FILE.parent.mkdir(parents=True, exist_ok=True)
     REPORT_FILE.write_text(text, encoding="utf-8")

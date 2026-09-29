@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -209,53 +210,92 @@ def main() -> int:
             pm_nc.save_post(plan.postprocessor)
             print(f"  Запомнил: {pm_nc.POST_FILE}")
 
-    macro = pm_nc.write_macro(plan, known_programs=programs)
-    print()
-    print(f"  Макрос вывода: {macro}")
-
     session, _message = pm_com.connect()
     if session is None:
         print("  (!) PowerMill пропал — подключение потеряно.")
         return 1
 
-    before = time.time()
-    command = f'MACRO "{str(macro).replace(chr(92), "/")}"'
-    ok, note = session.execute(command)
-    print(f"  PowerMill: {'принял' if ok else 'не принял'} команду запуска")
-    if note:
-        print(f"    {note}")
-    if not ok:
-        print("  Запусти макрос вручную: вкладка «Макрос» -> Выполнить -> pm_nc.mac")
-        return 1
+    # ---- попытки: пост может не встать с первого способа — пробуем следующие ----
+    # Так уже было на живом PowerMill: короткая команда TAPEOPTIONS прошла без
+    # ошибки, а вывод упал с «должен быть задан файл постпроцессора».
+    attempts = pm_nc.attempt_order() if plan.postprocessor is not None else [None]
+    steps_result: list[tuple[str, str, str]] = []
+    note = ""
+    written: Path | None = None
+    project_folder: Path | None = None
+    used_form = None
+    tried: list[str] = []
 
-    print("  Жду отчёт (до 3 минут)…")
-    got = wait_for_result(before)
-    print()
+    for index, form in enumerate(attempts):
+        title = form.title if form is not None else "без постпроцессора"
+        print()
+        print(f"  Попытка {index + 1} из {len(attempts)}: {title}")
+        if index > 0:
+            print("    (программу с этим именем пересоздам — она пустая, "
+                  "осталась от прошлой попытки)")
+        attempt_plan = replace(plan, overwrite=plan.overwrite or index > 0)
+        macro = pm_nc.write_macro(attempt_plan, known_programs=programs, form=form)
+        print(f"    макрос: {macro}")
+        before = time.time()
+        ok, note = session.execute(f'MACRO "{str(macro).replace(chr(92), "/")}"')
+        if not ok:
+            print(f"    PowerMill не принял команду запуска: {note}")
+            tried.append(f"{index + 1}. {title} — макрос не запустился")
+            continue
+        print("    жду отчёт (до 3 минут)…")
+        got = wait_for_result(before)
+        steps_result, note = pm_nc.last_result()
+        project_folder = pm_nc.project_path(steps_result) or project_folder
 
-    steps_result, note = pm_nc.last_result()
-    project_folder = pm_nc.project_path(steps_result)
-    written = pm_nc.find_written_file(project_folder, before)
-    if written is None and plan.filename is not None and Path(plan.filename).exists():
-        written = Path(plan.filename)
+        written = None
+        if attempt_plan.filename is not None:
+            guess = Path(attempt_plan.filename)
+            try:
+                if guess.exists() and guess.stat().st_mtime >= before - 2:
+                    written = guess
+            except OSError:
+                written = None
+        if written is None:
+            written = pm_nc.find_written_file(project_folder, before)
+
+        wrote_line = any(step == "write" and status == "ok"
+                         for step, status, _detail in steps_result)
+        if written is not None:
+            used_form = form
+            tried.append(f"{index + 1}. {title} — файл записан")
+            break
+        if not got:
+            tried.append(f"{index + 1}. {title} — макрос остановился (отчёта нет)")
+        elif wrote_line:
+            tried.append(f"{index + 1}. {title} — макрос отчитался, но файла нет")
+        else:
+            tried.append(f"{index + 1}. {title} — вывод не прошёл")
+        if index + 1 < len(attempts):
+            print("    файла NC не видно — пробую следующий способ")
+
+    if used_form is not None and plan.postprocessor is not None:
+        pm_nc.remember_form(used_form)
+        print()
+        print(f"  ✔ Способ установки поста запомнен: {used_form.key}")
+
+    wrote_line = any(step == "write" and status == "ok"
+                     for step, status, _detail in steps_result)
+    info = pm_nc.written_file_info(written)
 
     body = ["NC-программа (шаг 3.5, пункт 36)", "",
             pm_nc.format_result(steps_result), ""]
-    if not got:
-        body.append("Отчёт от макроса не появился — макрос остановился или вывод "
-                    "ещё идёт. Проверь папку ncprograms проекта.")
+    if tried:
+        body.append("Попытки установки постпроцессора:")
+        body.extend(f"  {item}" for item in tried)
+        body.append("")
     body.extend(pm_nc.not_checked_lines(plan))
     if note:
         body.append("")
         body.append(note)
 
-    REPORT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    REPORT_FILE.write_text("\n".join(body), encoding="utf-8")
-
+    print()
     print(pm_nc.format_result(steps_result))
     print()
-    info = pm_nc.written_file_info(written)
-    wrote_line = any(step == "write" and status == "ok"
-                     for step, status, _detail in steps_result)
     if info is not None:
         file, size = info
         print(f"  ✔ Файл на диске: {file} ({size} байт)")
@@ -269,12 +309,23 @@ def main() -> int:
     else:
         where = plan.filename or (project_folder / "ncprograms" if project_folder
                                  else "папка ncprograms проекта")
-        print(f"  (!) Файла NC на диске не видно: {where}")
-        print("      Проверь путь и постпроцессор (или выведи файл в PowerMill вручную:")
-        print("      NC-программа -> правая кнопка -> Вывод).")
-        body.append(f"(!) Файла NC на диске не видно: {where} — проверь путь и "
-                    "постпроцессор")
-    body.append("")
+        print(f"  (!) Файла NC на диске нет: {where}")
+        print("      Ни один способ установки поста не дал файла. Что делать:")
+        print("      1) в PowerMill задай пост сам: NC-программа -> постпроцессор -> "
+              "выбрать .pmoptz -> ОК;")
+        print("         после этого запусти пункт 36 ещё раз;")
+        print("      2) или запиши макрос руками: в PowerMill включи запись макроса, "
+              "выбери пост")
+        print("         в NC-программе, останови запись и пришли файл — вставим твои "
+              "строки")
+        print("         как ещё один способ (сейчас пробовали: "
+              + ", ".join(form.key for form in attempts if form is not None) + ").")
+        body.append(f"(!) Файла NC на диске нет: {where} — ни один способ установки "
+                    "поста не сработал, проверь постпроцессор")
+
+    REPORT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    REPORT_FILE.write_text("\n".join(body), encoding="utf-8")
+
     print()
     print("\n".join(pm_nc.not_checked_lines(plan)))
     print()

@@ -48,6 +48,105 @@ STEP_MARK = "NC;"
 # этот путь сами, без вопросов.
 POST_FILE = DATA_ROOT / "postprocessor.txt"
 
+# Каким способом удалось задать постпроцессор (тоже вне Git).
+TAPE_FILE = DATA_ROOT / "tape_option_form.txt"
+
+
+@dataclass(frozen=True)
+class TapeForm:
+    """Способ задать постпроцессор у NC-программы.
+
+    Зачем их несколько: на живом PowerMill 2026 короткая команда
+    `EDIT NCPROGRAM 'имя' TAPEOPTIONS 'путь'` прошла без ошибки, но пост НЕ
+    встал — вывод упал с «должен быть задан файл постпроцессора». Способы ниже
+    собраны из рабочих макросов Autodesk (форумы 7109100, 8441844, 6481783,
+    6584012, 9808487): где-то нужен `FILEOPEN`, где-то подтверждение окна
+    (`FORM ACCEPT SelectOptionFile`), где-то `NCSELECTED APPLY/ACCEPT`.
+    Пункт 36 пробует их по очереди и запоминает сработавший.
+    """
+
+    key: str
+    title: str
+    commands: tuple[str, ...] = ()
+
+    def lines(self, name: str, post: str) -> list[str]:
+        return [command.format(name=name, post=post) for command in self.commands]
+
+
+TAPE_FORMS: tuple[TapeForm, ...] = (
+    TapeForm("selected_fileopen",
+             "через выбранную программу: TAPEOPTIONS FILEOPEN + APPLY/ACCEPT",
+             ("ACTIVATE NCPROGRAM '{name}'",
+              "EDIT NCPROGRAM SELECTED TAPEOPTIONS FILEOPEN '{post}'",
+              "NCSELECTED APPLY",
+              "NCSELECTED ACCEPT")),
+    TapeForm("select_option_file",
+             "установка поста + подтверждение окна выбора (FORM ACCEPT)",
+             ("EDIT NCPROGRAM '{name}' TAPEOPTIONS '{post}'",
+              "FORM ACCEPT SelectOptionFile")),
+    TapeForm("fileopen_accept",
+             "TAPEOPTIONS FILEOPEN + подтверждение списка траекторий",
+             ("EDIT NCPROGRAM '{name}' TAPEOPTIONS FILEOPEN '{post}'",
+              "NCTOOLPATH APPLY",
+              "NCTOOLPATH ACCEPT")),
+    TapeForm("selected_plain",
+             "через выбранную программу: TAPEOPTIONS + APPLY/ACCEPT",
+             ("ACTIVATE NCPROGRAM '{name}'",
+              "EDIT NCPROGRAM SELECTED TAPEOPTIONS '{post}'",
+              "NCSELECTED APPLY",
+              "NCSELECTED ACCEPT")),
+    TapeForm("preferences",
+             "пост как настройка проекта (NC preferences)",
+             ("EDIT NCPROGRAM PREFERENCES TAPEOPTIONS FILEOPEN '{post}'",
+              "NCPREFERENCES ACCEPT")),
+    TapeForm("plain",
+             "короткая форма (у тебя не сработала — оставлена для полноты)",
+             ("EDIT NCPROGRAM '{name}' TAPEOPTIONS '{post}'",)),
+)
+
+DEFAULT_FORM = "selected_fileopen"
+
+
+def form_by_key(key: str) -> TapeForm | None:
+    for form in TAPE_FORMS:
+        if form.key == key:
+            return form
+    return None
+
+
+def saved_form() -> TapeForm | None:
+    """Способ, который уже срабатывал (или None)."""
+    if not TAPE_FILE.exists():
+        return None
+    try:
+        lines = pml_files.read(TAPE_FILE).splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            return form_by_key(stripped)
+    return None
+
+
+def remember_form(form: TapeForm | str) -> Path:
+    """Запоминает сработавший способ — следующий раз начнём с него."""
+    key = form.key if isinstance(form, TapeForm) else str(form)
+    stamp = ("# сработавший способ задать постпроцессор (живой PowerMill)\n"
+             f"{key}\n")
+    TAPE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    return pml_files.write(TAPE_FILE, stamp)
+
+
+def attempt_order() -> list[TapeForm]:
+    """Порядок попыток: сначала тот, что сработал раньше, потом остальные."""
+    saved = saved_form()
+    order = [saved] if saved is not None else []
+    for form in TAPE_FORMS:
+        if saved is None or form.key != saved.key:
+            order.append(form)
+    return order
+
 
 @dataclass
 class NcPlan:
@@ -102,7 +201,8 @@ def validate_plan(plan: NcPlan) -> list[str]:
     return problems
 
 
-def build_macro(plan: NcPlan, known_programs: list[str] | None = None) -> str:
+def build_macro(plan: NcPlan, known_programs: list[str] | None = None,
+                form: TapeForm | None = None) -> str:
     """Макрос вывода NC: создать программу, вложить траектории, записать файл.
 
     `known_programs` — программы, которые уже есть в проекте (их имена читает
@@ -133,6 +233,11 @@ def build_macro(plan: NcPlan, known_programs: list[str] | None = None) -> str:
         "// ============================================================",
         "",
         "RESET LOCALVARS",
+        "",
+        "// Окна ошибок гасим: неверная команда тогда останавливает макрос молча,",
+        "// а пункт 36 видит по отметкам, что не прошло, и пробует другой способ.",
+        "DIALOGS MESSAGE OFF",
+        "DIALOGS ERROR OFF",
         "",
         "// Объявления — заранее, до IF: внутри блоков PowerMill разрешает только",
         "// присваивание.",
@@ -216,13 +321,17 @@ def build_macro(plan: NcPlan, known_programs: list[str] | None = None) -> str:
 
     if plan.postprocessor is not None:
         post = str(plan.postprocessor).replace("\\", "/")
+        chosen = form or form_by_key(DEFAULT_FORM) or TAPE_FORMS[0]
+        form_lines = chosen.lines(safe_name, post)
         lines += [
             "    // постпроцессор (файл .pmoptz). Без него PowerMill отказывается",
-            "    // писать файл: «должен быть задан файл постпроцессора». Поэтому",
-            "    // сначала проверяем сам файл — иначе окно PowerMill вместо отчёта.",
+            "    // писать файл: «должен быть задан файл постпроцессора».",
+            f"    // Способ установки: {chosen.title}",
             f"    $pm_pp = '{post}'",
+            f'    $pm_form = "NC;tape_form;info;{chosen.key} — {chosen.title}"',
+            "    FILE WRITE $pm_form TO ncout",
             "    IF file_exists($pm_pp) {",
-            f"        EDIT NCPROGRAM '{safe_name}' TAPEOPTIONS '{post}'",
+        ] + [f"        {line}" for line in form_lines] + [
             f'        $pm_post = "{STEP_MARK}postprocessor;ok;{post}"',
             "    } ELSE {",
             f'        $pm_post = "{STEP_MARK}postprocessor;fail;файла постпроцессора нет: '
@@ -263,6 +372,8 @@ def build_macro(plan: NcPlan, known_programs: list[str] | None = None) -> str:
         "    FILE WRITE $pm_out TO nc_after",
         "    FILE CLOSE nc_after",
         "}",
+        "DIALOGS ERROR ON",
+        "DIALOGS MESSAGE ON",
         "PRINT $pm_fin",
         "MESSAGE INFO $pm_fin",
     ]
@@ -271,10 +382,12 @@ def build_macro(plan: NcPlan, known_programs: list[str] | None = None) -> str:
 
 
 def write_macro(plan: NcPlan, path: Path | str = MACRO_FILE,
-                known_programs: list[str] | None = None) -> Path:
+                known_programs: list[str] | None = None,
+                form: TapeForm | None = None) -> Path:
     """Пишет макрос вывода NC (CP1251, CRLF)."""
     target = Path(path)
-    pml_files.write(target, build_macro(plan, known_programs=known_programs))
+    pml_files.write(target, build_macro(plan, known_programs=known_programs,
+                                        form=form))
     return target
 
 

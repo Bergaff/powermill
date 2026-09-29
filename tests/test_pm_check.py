@@ -252,3 +252,75 @@ def test_not_checked_lines_without_collision_stay_short():
                               read_status=False)
     text = "\n".join(pm_check.not_checked_lines(plan))
     assert "патрон" not in text
+
+
+# --------------------------------------------------------------------------
+# Пробный запуск столкновений через COM и честные строки про державку
+# --------------------------------------------------------------------------
+class ProbeSession:
+    """Подставной PowerMill: запоминает команды и отвечает как живой."""
+
+    def __init__(self, refusal: str = ""):
+        self.commands: list[str] = []
+        self.refusal = refusal
+
+    def execute(self, command: str):
+        self.commands.append(command)
+        if self.refusal and command == "EDIT COLLISION APPLY":
+            return True, ("DoCommand('EDIT COLLISION APPLY') -> OK | ответ: "
+                          + self.refusal)
+        return True, "DoCommand(...) -> OK"
+
+
+def test_collision_refusal_is_recognised_from_the_answer():
+    note = ("DoCommand('EDIT COLLISION APPLY') -> OK | ответ: не заданы ни "
+            "хвостовик ни патрон")
+    assert pm_check.collision_refusal(note)
+
+
+def test_the_command_text_does_not_look_like_a_refusal():
+    """«Хвостовик» есть в тексте команды SHANK_CLEARANCE — на это не ведёмся."""
+    note = 'DoCommand(\'EDIT COLLISION SHANK_CLEARANCE "0.1"\') -> OK'
+    assert not pm_check.collision_refusal(note)
+
+
+def test_probe_collision_tells_that_it_is_impossible():
+    session = ProbeSession(refusal="не заданы ни хвостовик ни патрон")
+    ok, why = pm_check.probe_collision(session, "Chernovaya_D16", plan())
+
+    assert not ok and pm_check.collision_refusal(why)
+    assert "ACTIVATE TOOLPATH 'Chernovaya_D16'" in session.commands
+    assert "DIALOGS MESSAGE OFF" in session.commands
+    assert "DIALOGS MESSAGE ON" in session.commands      # окна вернули как были
+
+
+def test_probe_collision_passes_on_a_healthy_project():
+    session = ProbeSession()
+    ok, why = pm_check.probe_collision(session, "Chernovaya_D16", plan())
+    assert ok and "прошёл" in why
+
+
+def test_probe_collision_reports_a_command_power_mill_did_not_take():
+    class Angry(ProbeSession):
+        def execute(self, command: str):
+            self.commands.append(command)
+            if command.startswith("ACTIVATE TOOLPATH"):
+                return False, "toolpath не найден"
+            return True, "OK"
+
+    ok, why = pm_check.probe_collision(Angry(), "Net_Takoy", plan())
+    assert not ok and "не принял" in why
+
+
+def test_not_checked_lines_admit_the_conditional_holder():
+    text = "\n".join(pm_check.not_checked_lines(
+        plan(assumed_holder=True, holder_text="хвостовик Ø16×50, патрон Ø40/64×50")))
+    assert "УСЛОВНОЙ державкой" in text
+    assert "хвостовик Ø16×50" in text
+    assert "поймать нечем" not in text                # мы её всё-таки задали
+
+
+def test_not_checked_lines_say_why_collisions_were_skipped():
+    text = "\n".join(pm_check.not_checked_lines(
+        plan(collision=False, collision_off_reason="не заданы ни хвостовик ни патрон")))
+    assert "столкновения не проверялись" in text
