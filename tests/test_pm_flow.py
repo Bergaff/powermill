@@ -261,3 +261,85 @@ def test_preview_mentions_the_block_is_calculated_and_accepted():
     plan = pm_operation.OperationPlan(toolpath_name="C", tool_name="D16")
     text = "\n".join(pm_operation.preview(plan))
     assert "Заготовка" in text
+
+
+# --------------------------------------------------------------------------
+# ответы человека меняют план (а не только строчку в отчёте)
+# --------------------------------------------------------------------------
+def test_answers_rebuild_the_plan():
+    """«Нет» на расчёт — значит НЕТ: план пересобирается по ответам.
+
+    Раньше план строился до вопросов и не пересобирался: человек отвечал «нет»,
+    поток всё равно считал траекторию, а в отчёте стояло «без расчёта».
+    """
+    req = request()
+    assert req.calculate is True                      # по умолчанию считаем
+    plan, lines = pm_flow.plan_with_answers(req, calculate=False,
+                                            check_after=False, nc_after=False)
+    assert req.calculate is False and plan.calculate is False
+    assert req.check_after is False and req.nc_after is False
+    assert any("Без расчёта" in line for line in lines)
+    assert "Расчёт траектории — да" not in "\n".join(lines)
+
+
+def test_no_means_no_in_the_script():
+    """Сценарий обязан строить план ПОСЛЕ ответов, а не заранее."""
+    script = Path(__file__).resolve().parent.parent.joinpath(
+        "scripts", "make_flow.py").read_text(encoding="utf-8")
+    assert "plan_with_answers" in script
+    assert "pm_flow.build_plan(request)" not in script     # план не собирается до вопросов
+
+
+def test_without_calculation_the_macro_does_not_calculate():
+    req = request()
+    plan, _lines = pm_flow.plan_with_answers(req, calculate=False,
+                                             check_after=False, nc_after=False)
+    text = pm_operation.build_macro(plan)
+    assert 'EDIT TOOLPATH "Chernovaya_D16" CALCULATE' not in text
+    assert "STEP;calculate;skip" in text              # часть честно пишет «пропущено»
+    parts = pm_flow.operation_parts(plan, result_file=Path("/tmp/nonexistent.txt"))
+    keys = [part.key for part, _path in parts]
+    assert "computed" not in keys                     # проверять нечего — не считали
+
+
+def test_warnings_after_answers_tell_about_disabled_calculation():
+    req = request(allowance=0.3)
+    before = pm_flow.warnings_for(req)
+    assert not any("расчёт выключен" in item for item in before)
+    pm_flow.plan_with_answers(req, calculate=False, check_after=True, nc_after=False)
+    joined = " ".join(pm_flow.warnings_for(req))
+    assert "расчёт выключен" in joined                # «нет» — и предупреждаем прямо
+    assert "проверки без расчёта" in joined
+
+
+# --------------------------------------------------------------------------
+# имя траектории не должно быть занято (второй запуск на том же проекте)
+# --------------------------------------------------------------------------
+def test_free_toolpath_name_keeps_free_name():
+    assert pm_flow.free_toolpath_name("Chernovaya_D16", []) == "Chernovaya_D16"
+    assert pm_flow.free_toolpath_name("Chernovaya_D16",
+                                      ["Chernovaya_D16_2"]) == "Chernovaya_D16"
+
+
+def test_free_toolpath_name_adds_number_when_taken():
+    assert pm_flow.free_toolpath_name("Chernovaya_D16",
+                                      ["Chernovaya_D16"]) == "Chernovaya_D16_2"
+    assert pm_flow.free_toolpath_name(
+        "Chernovaya_D16", ["chernovaya_d16", "Chernovaya_D16_2"]) == "Chernovaya_D16_3"
+
+
+def test_free_toolpath_name_handles_empty_name():
+    assert pm_flow.free_toolpath_name("", []) == "Chernovaya_D16"
+    assert pm_flow.free_toolpath_name("   ", ["Chernovaya_D16"]) == "Chernovaya_D16_2"
+
+
+def test_script_checks_for_a_taken_toolpath_name():
+    """Занятое имя траектории ловится ДО работы, а не падением на переименовании."""
+    script = Path(__file__).resolve().parent.parent.joinpath(
+        "scripts", "make_flow.py").read_text(encoding="utf-8")
+    assert "live_toolpath_names" in script
+    assert "free_toolpath_name" in script
+
+
+def test_live_toolpath_names_without_powermill_is_empty():
+    assert pm_flow.live_toolpath_names() == []      # в песочнице PowerMill нет

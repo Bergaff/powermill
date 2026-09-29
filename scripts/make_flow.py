@@ -143,16 +143,23 @@ def main() -> int:
         if (wizard.answers[6] or "").strip() else None,
     )
 
-    plan, lines = pm_flow.build_plan(request)
-    print("=" * 64)
-    print("  ПЛАН (до выполнения)")
-    print("=" * 64)
-    print("\n".join(lines))
-    print()
-
-    for warning in pm_flow.warnings_for(request):
-        print(f"  (!) {warning}")
-    if pm_flow.warnings_for(request):
+    # Имя траектории в проекте должно быть свободным: переименование в занятое
+    # имя PowerMill не примет, а часть с расчётом идёт после. Ничего не удаляем —
+    # берём следующее свободное имя и говорим об этом.
+    existing = pm_flow.live_toolpath_names()
+    if any(item.strip().lower() == request.toolpath_name.strip().lower()
+           for item in existing):
+        free = pm_flow.free_toolpath_name(request.toolpath_name, existing)
+        print(f"  (!) Траектория «{request.toolpath_name}» в проекте уже есть.")
+        print("      Оставить это имя нельзя: PowerMill остановит часть с"
+              " переименованием,")
+        print("      а операция до неё уже будет сделана. Ничего не удаляю —"
+              f" возьму имя «{free}».")
+        if not ask_yes_no(f"  Согласен на имя «{free}»? (да/нет) [да]: "):
+            print("  Остановлено до изменений — ничего не менял.")
+            print("  Другое имя можно назвать в следующем запуске пункта 37.")
+            return 0
+        request.toolpath_name = free
         print()
 
     if request.tool_from_project:
@@ -170,9 +177,29 @@ def main() -> int:
     if any(answer is None for answer in answers):
         print("Остановлено до изменений — ничего не менял.")
         return 0
-    request.calculate, request.check_after, request.nc_after = (
-        answers[0] is not False, answers[1] is not False, answers[2] is True)
+    # План собираем ЗАНОВО, уже с ответами человека. Раньше план строился до
+    # вопросов: если на «Считать траекторию сразу?» человек отвечал «нет», поток
+    # всё равно считал траекторию, а в отчёте при этом стояло «без расчёта».
+    plan, lines = pm_flow.plan_with_answers(
+        request,
+        calculate=answers[0] is not False,
+        check_after=answers[1] is not False,
+        nc_after=answers[2] is True)
+    print("=" * 64)
+    print("  ПЛАН (с твоими ответами — ровно это и будет выполняться)")
+    print("=" * 64)
+    print("\n".join(lines))
     print()
+
+    warnings = pm_flow.warnings_for(request)
+    for warning in warnings:
+        print(f"  (!) {warning}")
+    if warnings:
+        print()
+    if not plan.calculate:
+        print("  Запомни: ты выбрал «без расчёта» — я НЕ буду нажимать CALCULATE,")
+        print("  траектория останется не посчитанной (проверки и NC тогда неполные).")
+        print()
 
     print("  Запускаю поток. Проект изменится — работай на копии.")
     print()

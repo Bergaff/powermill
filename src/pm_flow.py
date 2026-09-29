@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from config import OUTPUT_DIR
-from src import pm_check, pm_edit, pm_nc, pm_operation, pml_files
+from src import pm_check, pm_com, pm_edit, pm_nc, pm_operation, pml_files
 
 REPORT_FILE = OUTPUT_DIR / "pm_flow_report.txt"
 FLOW_MACRO = OUTPUT_DIR / "pm_flow.mac"
@@ -192,6 +192,57 @@ def build_plan(request: FlowRequest) -> tuple[pm_operation.OperationPlan, list[s
     return plan, lines
 
 
+def plan_with_answers(request: FlowRequest, calculate: bool,
+                      check_after: bool, nc_after: bool
+                      ) -> tuple[pm_operation.OperationPlan, list[str]]:
+    """План ПОСЛЕ ответов человека — план собирается заново, а не заранее.
+
+    Это была настоящая ошибка: план строился до вопросов, и когда человек отвечал
+    «нет» на «Считать траекторию сразу?», поток всё равно считал траекторию —
+    в проекте появлялась посчитанная траектория, а в отчёте стояло «без расчёта».
+    «Нет» — значит нет: ответы меняют запрос, и по ним строится новый план.
+    """
+    request.calculate = bool(calculate)
+    request.check_after = bool(check_after)
+    request.nc_after = bool(nc_after)
+    return build_plan(request)
+
+
+def live_toolpath_names() -> list[str]:
+    """Имена траекторий в ОТКРЫТОМ проекте (пусто, если PowerMill не отвечает).
+
+    Нужно перед запуском: `RENAME TOOLPATH ; 'имя'` переименовывает только что
+    созданную траекторию в занятое имя — PowerMill на этом останавливает часть, и
+    второй запуск пункта 37 на том же проекте спотыкался бы об это.
+    """
+    try:
+        session, _message = pm_com.connect()
+    except Exception:                                  # noqa: BLE001 — связь не наша забота
+        return []
+    if session is None:
+        return []
+    try:
+        return [str(name) for name in session.section_names("toolpaths") or []]
+    except Exception:                                  # noqa: BLE001
+        return []
+
+
+def free_toolpath_name(name: str, existing: list[str]) -> str:
+    """Свободное имя траектории: «Chernovaya_D16» занято → «Chernovaya_D16_2».
+
+    Ничего не удаляем и не переименовываем чужое: просто берём следующее имя и
+    говорим об этом человеку.
+    """
+    base = (name or "Chernovaya_D16").strip() or "Chernovaya_D16"
+    taken = {item.strip().lower() for item in existing}
+    if base.lower() not in taken:
+        return base
+    index = 2
+    while f"{base}_{index}".lower() in taken:
+        index += 1
+    return f"{base}_{index}"
+
+
 def warnings_for(request: FlowRequest) -> list[str]:
     """О чём обязательно предупредить технолога до запуска."""
     items: list[str] = []
@@ -305,44 +356,6 @@ def wait_for_part(part: pm_operation.MacroPart, before: float, result_file: Path
         if time.time() >= deadline:
             return False
         time.sleep(0.5)
-
-
-def warnings_for(request: FlowRequest) -> list[str]:
-    """О чём обязательно предупредить технолога до запуска."""
-    items: list[str] = []
-    if request.allowance <= 0:
-        items.append("припуск на чистовую 0 мм: траектория пойдёт «в размер» — "
-                     "проверь, что это черновая, а не чистовая")
-    if request.stock_margin_xy < 0 or request.stock_margin_z < 0:
-        items.append("припуск на заготовку отрицательный — это уменьшит заготовку")
-    if request.tool_diameter > 0 and request.stepover and \
-            request.stepover > request.tool_diameter:
-        items.append(f"шаг по XY {request.stepover:g} мм больше диаметра фрезы "
-                     f"D{request.tool_diameter:g} — PowerMill оставит гребешки")
-    if not request.calculate:
-        items.append("расчёт выключен: траектория создастся, но не посчитается, "
-                     "и проверки/NС будут неполными")
-    if request.check_after and not request.calculate:
-        items.append("проверки без расчёта не имеют смысла — включи расчёт")
-    return items
-
-
-def report_path() -> Path:
-    return REPORT_FILE
-
-
-def save_report(report: FlowReport) -> Path:
-    REPORT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    REPORT_FILE.write_text(report.format(), encoding="utf-8")
-    return REPORT_FILE
-
-
-# --------------------------------------------------------------------------
-# Выполнение (шаги выполняет сценарий, модуль собирает и разбирает)
-# --------------------------------------------------------------------------
-def operation_macro(plan: pm_operation.OperationPlan) -> Path:
-    """Пишет макрос операции целиком (шаги 3.1–3.3) — для ручного запуска."""
-    return pm_operation.write_macro(plan, path=FLOW_MACRO)
 
 
 def backup(project_folder: Path | str | None) -> Path | None:
