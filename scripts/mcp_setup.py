@@ -377,8 +377,9 @@ def main(argv: list[str] | None = None) -> int:
     print("инструменты — режимы резания, разбор ошибок, план операции, состояние")
     print("PowerMill. Клиент вызывает их сам, тебе достаточно писать в чат.")
     print()
-    print("Найденные клиенты:")
+    print("Куда можно прописать (• — файл настроек уже есть, — — пока нет):")
     existing = [client for client in clients() if client.path.exists()]
+    missing = [client for client in clients() if not client.path.exists()]
     for client in clients():
         mark = "•" if client.path.exists() else "—"
         print(f"  {mark} {client.title}")
@@ -390,16 +391,25 @@ def main(argv: list[str] | None = None) -> int:
         for client in existing:
             if args.yes or ask_yes(f"  Прописать в «{client.title}»?", True):
                 done.extend(write_config(client))
-    if not existing:
+    if missing and not args.yes:
+        project_client = find_client("project")
+        others = [client for client in missing if client is not project_client]
+        if others:
+            print("  У клиентов с «—» файла настроек ещё нет (клиент поставлен, но MCP")
+            print("  в нём не настраивали — или клиента нет вовсе). Создать файлы")
+            print("  настроек сразу для них? Лишние файлы ничему не мешают.")
+            if ask_yes("  Создать настройки и для них?", False):
+                for client in others:
+                    done.extend(write_config(client))
+    if not existing and not done:
         # Клиентов на компьютере нет — это не ошибка: MCP просто «на будущее».
         print("Ни одного ИИ-клиента с MCP на этом компьютере не нашлось.")
         print("Это не мешает работе: окно приложения, лента и панель PowerMill")
         print("работают и без клиента. Поставишь Claude Desktop, Cursor или")
         print("VS Code — запусти пункт 44 заново, он найдёт и пропишет сам.")
         print()
-    if not done:
-        project = find_client("project")
-        assert project is not None
+    project = find_client("project")
+    if project is not None and (not project.path.exists() or not done):
         print("Готовый блок — его можно вставить в настройки MCP клиента")
         print("в любой момент (он же сохранится в отчёте):")
         print()

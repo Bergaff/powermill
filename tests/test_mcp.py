@@ -623,6 +623,56 @@ def test_setup_says_it_is_fine_when_no_clients_installed(monkeypatch, tmp_path,
     assert "mcpServers" in (tmp_path / "mcp_report.txt").read_text(encoding="utf-8")
 
 
+def _fake_answers(monkeypatch, mcp_setup, answers):
+    """Подменяет вопросы пункта 44 заготовленными ответами и запоминает их."""
+    asked: list[str] = []
+    queue = iter(answers)
+
+    def fake_ask(question, default_yes=True):
+        asked.append(question)
+        try:
+            return next(queue)
+        except StopIteration:                       # больше вопросов не ждали
+            return default_yes
+
+    monkeypatch.setattr(mcp_setup, "ask_yes", fake_ask)
+    return asked
+
+
+def test_ask_offer_configs_for_clients_without_one(monkeypatch, tmp_path, capfd):
+    """Клиент стоит, а файла настроек нет: пункт 44 предлагает его создать."""
+    from scripts import mcp_setup
+
+    alone = tmp_path / "нет" / "cursor" / "mcp.json"
+    project_path = tmp_path / "нет" / ".mcp.json"
+    clients = [mcp_setup.Client("cursor", "Cursor", alone, "mcpServers"),
+               mcp_setup.Client("project", "Этот проект", project_path, "mcpServers")]
+    monkeypatch.setattr(mcp_setup, "clients", lambda: clients)
+    monkeypatch.setattr(mcp_setup, "REPORT_FILE", tmp_path / "mcp_report.txt")
+    asked = _fake_answers(monkeypatch, mcp_setup, [False, False])
+
+    assert mcp_setup.main([]) == 0
+    assert not alone.exists()                      # отказались — и правильно
+    assert not project_path.exists()
+    assert "пока нет" in capfd.readouterr().out    # в списке видно, где файла нет
+    assert any("Создать настройки и для них" in question for question in asked)
+
+
+def test_ask_creates_configs_when_told_yes(monkeypatch, tmp_path, capfd):
+    """Согласился — файл настроек появится даже там, где его ещё не было."""
+    from scripts import mcp_setup
+
+    alone = tmp_path / "cursor" / "mcp.json"
+    clients = [mcp_setup.Client("cursor", "Cursor", alone, "mcpServers")]
+    monkeypatch.setattr(mcp_setup, "clients", lambda: clients)
+    monkeypatch.setattr(mcp_setup, "REPORT_FILE", tmp_path / "mcp_report.txt")
+    _fake_answers(monkeypatch, mcp_setup, [True, True])
+
+    assert mcp_setup.main([]) == 0
+    data = json.loads(alone.read_text(encoding="utf-8"))
+    assert mcp_setup.SERVER_NAME in data["mcpServers"]
+
+
 def test_client_list_covers_unusual_install_locations():
     """Claude из Store и VS Code Insiders держат настройки в других местах."""
     from scripts import mcp_setup
