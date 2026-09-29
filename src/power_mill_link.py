@@ -189,7 +189,8 @@ def probe_macro(output_file: Path | str | None = None) -> str:
         "}",
         "",
     ]
-    return "\n".join(body)
+    # Дескрипторы уникальны на запуск: оборванный макрос оставил бы их занятыми.
+    return pml_files.unique_handles("\n".join(body))
 
 
 # Совместимость: текст макроса с путём по умолчанию

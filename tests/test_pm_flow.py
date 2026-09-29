@@ -177,8 +177,9 @@ def test_operation_parts_are_written_for_the_flow(tmp_path, monkeypatch):
     monkeypatch.setattr(pm_flow, "OUTPUT_DIR", tmp_path)
     plan, _lines = pm_flow.build_plan(request())
     written = pm_flow.operation_parts(plan)
-    assert [part.key for part, _path in written] == [
-        "tool", "block", "toolpath", "feeds", "calculate", "block_size"]
+    keys = [part.key for part, _path in written]
+    assert keys[:6] == ["tool", "block", "toolpath", "feeds", "calculate", "block_size"]
+    assert keys[6:] == ["feeds_read", "computed"]         # чтения — в самом конце
     for _part, path in written:
         assert path.exists() and path.parent == tmp_path
         assert path.name.startswith("pm_flow_")
@@ -189,8 +190,11 @@ def test_every_part_has_its_own_timeout(tmp_path, monkeypatch):
     for create_tool in (True, False):
         keys = {part.key for part in pm_operation.build_parts(
             pm_flow.build_plan(request(tool_from_project=not create_tool))[0])}
-        assert keys <= set(pm_flow.PART_TIMEOUTS)
+        assert keys <= set(pm_flow.PART_TIMEOUTS), sorted(
+            keys - set(pm_flow.PART_TIMEOUTS))
     assert pm_flow.PART_TIMEOUTS["calculate"] > pm_flow.PART_TIMEOUTS["block"]
+    # части-проверки (чтения) не должны держать поток минутами
+    assert pm_flow.PART_TIMEOUTS["computed"] <= 120
 
 
 def test_wait_for_part_sees_the_step_in_the_report(tmp_path, monkeypatch):
@@ -198,12 +202,15 @@ def test_wait_for_part_sees_the_step_in_the_report(tmp_path, monkeypatch):
     monkeypatch.setattr(pm_operation, "RESULT_FILE", result)
     part = pm_operation.MacroPart("block", "Заготовка", ("block",), [])
     result.write_text("STEP;tool;ok;фреза\n", encoding="utf-8")
-    assert pm_flow.part_finished(part) is False
-    assert pm_flow.wait_for_part(part, 0.0, timeout=0.2) is False
+    assert pm_flow.part_finished(part, result) is False
+    assert pm_flow.wait_for_part(part, 0.0, result, timeout=0.2) is False
 
     result.write_text("STEP;tool;ok;фреза\nSTEP;block;ok;заготовка\n", encoding="utf-8")
-    assert pm_flow.part_finished(part) is True
-    assert pm_flow.wait_for_part(part, 0.0, timeout=1.0) is True
+    assert pm_flow.part_finished(part, result) is True
+    assert pm_flow.wait_for_part(part, 0.0, result, timeout=1.0) is True
+    # часть, которая сама написала «fail», поток обязан остановить
+    result.write_text("STEP;block;fail;PowerMill не понял команду\n", encoding="utf-8")
+    assert pm_flow.part_failure(part, result) == "Заготовка (Block): PowerMill не понял команду"
 
 
 def test_stale_report_does_not_count_as_finished(tmp_path, monkeypatch):
@@ -217,15 +224,17 @@ def test_stale_report_does_not_count_as_finished(tmp_path, monkeypatch):
     monkeypatch.setattr(pm_operation, "RESULT_FILE", result)
     part = pm_operation.MacroPart("block", "Заготовка", ("block",), [])
     # before — момент отправки части в PowerMill: отчёт старше него не считается
-    assert pm_flow.wait_for_part(part, __import__("time").time(), timeout=0.2) is False
+    assert pm_flow.wait_for_part(
+        part, __import__("time").time(), result, timeout=0.2) is False
 
 
 def test_flow_stops_and_names_the_failed_part():
     """Пункт 37 обязан сказать, НА КАКОЙ части встал, а не «что-то не так»."""
     text = Path(__file__).resolve().parent.parent.joinpath(
         "scripts", "make_flow.py").read_text(encoding="utf-8")
-    assert "pm_flow.operation_parts(plan)" in text
+    assert "pm_flow.operation_parts(plan" in text
     assert "wait_for_part" in text
+    assert "release_handles" in text                     # снятие залипших имён
     assert "не дошёл до конца части" in text
     assert "окно сообщений самого PowerMill" in text
     assert "остальное уцелеет" in text

@@ -136,3 +136,83 @@ def test_sanitize_keeps_file_paths_intact():
     text = "STRING $f = 'E:/powermill-ai/output/pm_test.txt'"
     assert pml_files.sanitize(text) == text
     assert Path("E:/powermill-ai/output/pm_test.txt").name == "pm_test.txt"
+
+
+# --------------------------------------------------------------------------
+# Имена файловых дескрипторов: «handle уже используется»
+# --------------------------------------------------------------------------
+def test_handle_is_unique_and_alphanumeric():
+    names = [pml_files.file_handle() for _ in range(50)]
+    assert len(set(names)) == 50
+    assert all(name.isalnum() and name[:1].isalpha() for name in names)
+
+
+def test_handles_survive_power_mill_naming():
+    """Имя должно быть одним словом: PML не понимает «out.1» или «out-1»."""
+    for _ in range(10):
+        name = pml_files.file_handle("p")
+        assert name.isascii() and name.isalnum()
+
+
+def test_unique_handles_rewrites_macro_but_not_text():
+    text = ("FILE OPEN $f FOR WRITE AS out\n"
+            "FILE WRITE $x TO out\n"
+            "FILE CLOSE out\n"
+            "PRINT \"out of range\"\n")          # это не дескриптор, трогать нельзя
+    fixed = pml_files.unique_handles(text)
+    handle = fixed.split("AS ")[1].split("\n")[0]
+    assert handle != "out"                       # имя стало уникальным
+    assert f"FILE WRITE $x TO {handle}" in fixed
+    assert f"FILE CLOSE {handle}" in fixed
+    assert "out of range" in fixed               # текст в кавычках не пострадал
+    assert " of range" in fixed                  # и внутрь строки не залезли
+
+
+def test_unique_handles_keeps_open_close_pairs_together():
+    text = ("FILE OPEN $a FOR WRITE AS chk_a1\nFILE CLOSE chk_a1\n"
+            "FILE OPEN $b FOR WRITE AS chk_a2\nFILE CLOSE chk_a2\n")
+    fixed = pml_files.unique_handles(text)
+    names = [part.split("AS ")[1].split("\n")[0] for part in fixed.split("FILE OPEN")[1:]]
+    assert len(set(names)) == 2
+    for name in names:
+        assert fixed.count(name) == 2
+
+
+def test_unique_handles_changes_every_call():
+    first = pml_files.unique_handles("FILE CLOSE out")
+    second = pml_files.unique_handles("FILE CLOSE out")
+    assert first != second
+
+
+def test_release_handles_asks_power_mill_and_ignores_answers():
+    calls: list[str] = []
+
+    class Session:
+        def execute(self, command):
+            calls.append(command)
+            return (True, "ошибка")       # файл не был открыт — ответ не важен
+
+    released = pml_files.release_handles(Session())
+    assert "FILE CLOSE out" in calls
+    assert released                       # имена «попробовали» освободить
+    assert all(command.startswith("FILE CLOSE ") for command in calls)
+
+
+def test_release_handles_survives_a_broken_bridge():
+    class Session:
+        def execute(self, command):
+            raise RuntimeError("PowerMill закрылся")
+
+    assert pml_files.release_handles(Session()) == []
+
+
+def test_unique_handles_does_not_touch_paths():
+    """Папка с именем out или строка «out of range» — не дескриптор."""
+    text = ("STRING $f = 'E:/out/detail.txt'\n"
+            "FILE OPEN $f FOR WRITE AS out\n"
+            "PRINT \"out of range\"\n")
+    fixed = pml_files.unique_handles(text)
+    assert "'E:/out/detail.txt'" in fixed
+    assert '"out of range"' in fixed
+    handle = fixed.split(" AS ")[1].split("\n")[0]
+    assert handle != "out" and handle.startswith("out")

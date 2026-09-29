@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from config import OUTPUT_DIR
-from src import pm_check, pm_edit, pm_nc, pm_operation
+from src import pm_check, pm_edit, pm_nc, pm_operation, pml_files
 
 REPORT_FILE = OUTPUT_DIR / "pm_flow_report.txt"
 FLOW_MACRO = OUTPUT_DIR / "pm_flow.mac"
@@ -239,39 +239,109 @@ PART_TIMEOUTS = {
     "toolpath": 300.0,
     "feeds": 90.0,
     "calculate": 900.0,
+    # части-проверки: они только читают свойства для отчёта и не должны
+    # задерживать поток — если PowerMill их не понял, идём дальше
     "block_size": 60.0,
+    "feeds_read": 60.0,
+    "computed": 60.0,
 }
 
 
-def operation_parts(plan: pm_operation.OperationPlan
+def operation_parts(plan: pm_operation.OperationPlan,
+                    result_file: Path | None = None
                     ) -> list[tuple[pm_operation.MacroPart, Path]]:
     """Части макроса операции отдельными файлами: их выполняем по очереди.
 
     Так делает пункт 33 с инструментом: одна неудачная строка стоит только
     своей части, а не всей операции — и в отчёте видно, на чём остановились.
     """
-    return pm_operation.write_parts(plan, folder=OUTPUT_DIR, prefix="pm_flow")
+    return pm_operation.write_parts(plan, folder=OUTPUT_DIR, prefix="pm_flow",
+                                    result_file=result_file or pm_operation.RESULT_FILE)
 
 
-def part_finished(part: pm_operation.MacroPart) -> bool:
-    """Записала ли эта часть свой шаг в отчёт макроса."""
-    steps, _note = pm_operation.last_result(pm_operation.RESULT_FILE)
-    return any(step in part.markers for step, _status, _detail in steps)
+def new_result_file() -> Path:
+    """Свой файл отчёта на каждый запуск.
+
+    Зачем не общий: если макрос оборвётся на ошибке, `FILE CLOSE` не выполнится
+    и PowerMill оставит файл открытым. С общим файлом следующий запуск мог бы
+    в него не попасть; со своим — каждый запуск чистый.
+    """
+    return OUTPUT_DIR / f"pm_flow_result_{pml_files.file_handle('r')}.txt"
 
 
-def wait_for_part(part: pm_operation.MacroPart, before: float,
+def part_steps(part: pm_operation.MacroPart, result_file: Path
+               ) -> list[tuple[str, str, str]]:
+    """Шаги отчёта, которые записала именно эта часть."""
+    steps, _note = pm_operation.last_result(result_file)
+    return [item for item in steps if item[0] in part.markers]
+
+
+def part_finished(part: pm_operation.MacroPart, result_file: Path) -> bool:
+    """Дошла ли эта часть до своего конца (по её последним меткам)."""
+    steps = part_steps(part, result_file)
+    done = part.done or part.markers
+    return any(step in done for step, _status, _detail in steps)
+
+
+def part_failure(part: pm_operation.MacroPart, result_file: Path) -> str:
+    """Текст ошибки, если часть записала её сама (``fail``), иначе пусто."""
+    for step, status, detail in part_steps(part, result_file):
+        if status == "fail":
+            return f"{pm_operation.STEP_TITLES.get(step, step)}: {detail}"
+    return ""
+
+
+def wait_for_part(part: pm_operation.MacroPart, before: float, result_file: Path,
                   timeout: float | None = None) -> bool:
-    """Ждём, что PowerMill дошёл до конца этой части (появился её шаг в отчёте)."""
+    """Ждём, что PowerMill дошёл до конца этой части (появилась её метка)."""
     limit = PART_TIMEOUTS.get(part.key, 120.0) if timeout is None else timeout
     deadline = time.time() + limit
     while True:
-        if pm_operation.RESULT_FILE.exists():
-            fresh = pm_operation.RESULT_FILE.stat().st_mtime > before - 0.001
-            if fresh and part_finished(part):
+        if result_file.exists():
+            fresh = result_file.stat().st_mtime > before - 0.001
+            if fresh and part_finished(part, result_file):
                 return True
         if time.time() >= deadline:
             return False
         time.sleep(0.5)
+
+
+def warnings_for(request: FlowRequest) -> list[str]:
+    """О чём обязательно предупредить технолога до запуска."""
+    items: list[str] = []
+    if request.allowance <= 0:
+        items.append("припуск на чистовую 0 мм: траектория пойдёт «в размер» — "
+                     "проверь, что это черновая, а не чистовая")
+    if request.stock_margin_xy < 0 or request.stock_margin_z < 0:
+        items.append("припуск на заготовку отрицательный — это уменьшит заготовку")
+    if request.tool_diameter > 0 and request.stepover and \
+            request.stepover > request.tool_diameter:
+        items.append(f"шаг по XY {request.stepover:g} мм больше диаметра фрезы "
+                     f"D{request.tool_diameter:g} — PowerMill оставит гребешки")
+    if not request.calculate:
+        items.append("расчёт выключен: траектория создастся, но не посчитается, "
+                     "и проверки/NС будут неполными")
+    if request.check_after and not request.calculate:
+        items.append("проверки без расчёта не имеют смысла — включи расчёт")
+    return items
+
+
+def report_path() -> Path:
+    return REPORT_FILE
+
+
+def save_report(report: FlowReport) -> Path:
+    REPORT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    REPORT_FILE.write_text(report.format(), encoding="utf-8")
+    return REPORT_FILE
+
+
+# --------------------------------------------------------------------------
+# Выполнение (шаги выполняет сценарий, модуль собирает и разбирает)
+# --------------------------------------------------------------------------
+def operation_macro(plan: pm_operation.OperationPlan) -> Path:
+    """Пишет макрос операции целиком (шаги 3.1–3.3) — для ручного запуска."""
+    return pm_operation.write_macro(plan, path=FLOW_MACRO)
 
 
 def backup(project_folder: Path | str | None) -> Path | None:

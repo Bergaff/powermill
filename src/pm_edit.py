@@ -218,7 +218,9 @@ def edit_macro(edits: list[SpeedFeed], result_file: Path | str = RESULT_FILE,
         "}",
         "",
     ]
-    return "\n".join(lines)
+    # Имена файловых дескрипторов — уникальные на каждый запуск: иначе после
+    # оборванного макроса PowerMill отвечает «handle уже используется out».
+    return pml_files.unique_handles("\n".join(lines))
 
 
 def _short(param: str) -> str:

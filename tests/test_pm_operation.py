@@ -5,6 +5,8 @@
 """
 from __future__ import annotations
 
+import re
+
 from src import pm_operation, pml_vocab
 
 VOCAB = {"entities": ["model", "boundary", "tool", "toolpath", "workplane",
@@ -32,8 +34,8 @@ def test_operation_macro_passes_validator():
 def test_macro_resets_vars_and_writes_report():
     text = pm_operation.build_macro(make_plan())
     assert "RESET LOCALVARS" in text.splitlines()[:15]
-    assert "FILE OPEN $pm_res FOR WRITE AS out" in text
-    assert "FILE CLOSE out" in text
+    match = re.search(r"FILE OPEN \$pm_res FOR WRITE AS (\w+)", text)
+    assert match and f"FILE CLOSE {match.group(1)}" in text
     assert "MESSAGE INFO" in text
 
 
@@ -197,15 +199,39 @@ def test_no_unverified_block_properties():
         assert "XLength" not in text and "YLength" not in text and "ZLength" not in text
         assert "$Block.Limits.XMax" in text
         parts = pm_operation.build_parts(plan)
-        assert parts[-1].key == "block_size"
+        keys = [part.key for part in parts]
+        assert keys.index("block_size") > keys.index("calculate")
         # в самой части заготовки свойств блока нет — только команды
         block_part = next(part for part in parts if part.key == "block")
         assert "$Block" not in block_part.text()
 
 
 def test_part_order_is_the_working_order():
-    keys = [part.key for part in pm_operation.build_parts(make_plan())]
-    assert keys == ["tool", "block", "toolpath", "feeds", "calculate", "block_size"]
+    keys = [part.key for part in pm_operation.build_parts(make_plan(calculate=True))]
+    assert keys == ["tool", "block", "toolpath", "feeds", "calculate",
+                    "block_size", "feeds_read", "computed"]
+    # без расчёта части «посчитана ли траектория» нет — проверять нечего
+    without = [part.key for part in pm_operation.build_parts(make_plan())]
+    assert without == ["tool", "block", "toolpath", "feeds", "calculate",
+                       "block_size", "feeds_read"]
+
+
+def test_reads_go_last_and_are_marked():
+    """Чтения свойств — в самых последних частях и с пометкой «только отчёт».
+
+    Ошибка в выражении останавливает макрос, а имена свойств у PowerMill
+    различаются от версии к версии. Поэтому все чтения — в конце: даже если
+    они не пройдут, работа в проекте уже сделана.
+    """
+    parts = pm_operation.build_parts(make_plan(calculate=True))
+    reads = [part for part in parts if part.reads]
+    assert [part.key for part in reads] == ["block_size", "feeds_read", "computed"]
+    assert parts[-len(reads):] == reads
+    for part in parts[:-len(reads)]:
+        assert not part.reads, f"{part.key}: чтения должны быть в конце"
+        for line in part.lines:
+            assert "$Block.Limits" not in line
+            assert "$toolpath." not in line
 
 
 def test_every_step_of_the_macro_belongs_to_a_part():
@@ -220,18 +246,19 @@ def test_every_step_of_the_macro_belongs_to_a_part():
 def test_each_part_is_a_standalone_macro(tmp_path):
     """Каждую часть PowerMill выполняет отдельным макросом — она самодостаточна."""
     written = pm_operation.write_parts(make_plan(), folder=tmp_path, prefix="pm_flow")
-    assert len(written) == 6
+    assert len(written) == len(pm_operation.build_parts(make_plan()))
     for index, (part, path) in enumerate(written, start=1):
         text = path.read_text(encoding="cp1251")
         assert path.name == f"pm_flow_{index}_{part.key}.mac"
         assert "RESET LOCALVARS" in text                  # переменные не переживают макрос
-        assert "FILE CLOSE out" in text
         assert "MESSAGE INFO" not in text                 # поток идёт дальше, окно не ждём
-        if index == 1:
-            assert "FILE OPEN $pm_res FOR WRITE AS out" in text
-        else:
-            assert "FILE OPEN $pm_res FOR APPEND AS out" in text
-        for line in part.lines:
+        mode = "WRITE" if index == 1 else "APPEND"
+        match = re.search(rf"FILE OPEN \$pm_res FOR {mode} AS (\w+)", text)
+        assert match, f"{path.name}: нет открытия файла отчёта"
+        handle = match.group(1)
+        assert f"FILE CLOSE {handle}" in text, f"{path.name}: файл не закрывается"
+        assert " AS out" not in text, f"{path.name}: вернулось залипающее имя out"
+        for line in part.text(handle).splitlines():
             assert line in text, f"{part.key}: потерялась строка {line!r}"
     assert "PRINT $pm_done" in written[-1][1].read_text(encoding="cp1251")
 
@@ -248,3 +275,35 @@ def test_parts_still_pass_the_vocabulary_validator():
     for part in pm_operation.build_parts(make_plan()):
         report = pml_vocab.validate(part.text(), VOCAB)
         assert report["ok"], f"{part.key}: " + pml_vocab.format_check(report)
+
+
+# --------------------------------------------------------------------------
+# Файловые дескрипторы: «handle уже используется out»
+# --------------------------------------------------------------------------
+def test_handles_are_unique_per_part_and_per_run(tmp_path):
+    """Так было на живой машине: оборванный макрос оставил файл открытым, и
+    следующая попытка открыть его же именем падала «handle уже используется»."""
+    first = pm_operation.write_parts(make_plan(), folder=tmp_path, prefix="a")
+    second = pm_operation.write_parts(make_plan(), folder=tmp_path, prefix="b")
+    handles = []
+    for _part, path in first + second:
+        text = path.read_text(encoding="cp1251")
+        handles += re.findall(r"AS (\w+)", text)
+    assert len(handles) == len(set(handles)), "имя файла переиспользуется между частями"
+    assert not any(name == "out" for name in handles)
+
+
+def test_big_macro_also_uses_its_own_handle():
+    first = pm_operation.build_macro(make_plan())
+    second = pm_operation.build_macro(make_plan())
+    h1 = re.findall(r"AS (\w+)", first)
+    h2 = re.findall(r"AS (\w+)", second)
+    assert h1 and h2 and h1 != h2
+    assert "AS out" not in first
+    assert "{out}" not in first                       # подстановка выполнена
+    assert f"FILE CLOSE {h1[0]}" in first
+
+
+def test_operation_macro_still_passes_the_validator_after_handle_change():
+    report = pml_vocab.validate(pm_operation.build_macro(make_plan()), VOCAB)
+    assert report["ok"], pml_vocab.format_check(report)

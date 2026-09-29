@@ -90,3 +90,80 @@ def read(path: Path | str) -> str:
     """Читает файл, который мог записать макрос PowerMill (любая из кодировок)."""
     target = Path(path)
     return decode(target.read_bytes())
+
+
+# --------------------------------------------------------------------------
+# Имена файловых дескрипторов в макросах
+# --------------------------------------------------------------------------
+# PowerMill держит открытый макросом файл до `FILE CLOSE` — и на всю СЕССИЮ.
+# Если макрос оборвался на ошибке (а на живой машине так и было: выражение
+# `$Block.XLength` остановило макрос на 31-й строке), `FILE CLOSE` не выполнился,
+# и следующая попытка открыть файл тем же именем падает: «handle уже
+# используется out». Поэтому имя дескриптора делаем УНИКАЛЬНЫМ: своё на каждую
+# часть и на каждый запуск. Тогда оборванный макрос ничего не ломает.
+_handle_counter = 0
+
+
+def file_handle(prefix: str = "o") -> str:
+    """Уникальное имя файлового дескриптора для макроса (буквы и цифры)."""
+    global _handle_counter
+    import time
+
+    _handle_counter += 1
+    token = (time.strftime("%H%M%S") + f"{int(time.time() * 1000) % 1000:03d}"
+             + f"{_handle_counter:02d}")
+    return f"{prefix}{token}"
+
+
+def legacy_handles() -> tuple[str, ...]:
+    """Имена, которыми пользовались прежние версии (могут «залипнуть»)."""
+    return ("out", "chkout", "askq", "aska", "tfile", "marka", "tread",
+            "chk", "pmout")
+
+
+def release_handles(session, names: tuple[str, ...] | None = None) -> list[str]:
+    """Пробует освободить «залипшие» имена файлов после оборванного макроса.
+
+    Результат не проверяем: если имя не занято, PowerMill просто ответит
+    ошибкой команды — это нормально и никому не мешает. `session` — любой
+    объект с методом `execute(команда)` (у нас это `src.pm_com.LiveSession`).
+    """
+    released: list[str] = []
+    for name in (names if names is not None else legacy_handles()):
+        try:
+            session.execute(f"FILE CLOSE {name}")
+            released.append(name)
+        except Exception:  # noqa: BLE001
+            continue
+    return released
+
+
+def unique_handles(text: str, names: tuple[str, ...] | None = None) -> str:
+    """Делает имена файловых дескрипторов в тексте макроса уникальными.
+
+    PowerMill держит открытый макросом файл до `FILE CLOSE` — и на всю сессию.
+    Оборванный на ошибке макрос до `FILE CLOSE` не доходит, и следующий запуск
+    падает с «handle уже используется <имя>» (это и случилось на живой машине:
+    макрос встал на строке с размерами заготовки, а файл остался открытым).
+    Проще не бороться с этим, а не переиспользовать имя: к каждому добавляется
+    уникальный числовой хвост — свой на каждый запуск.
+
+    Меняются ТОЛЬКО места, где имя стоит после `AS` / `TO` / `CLOSE` / `FROM`
+    (это и есть дескрипторы). Текст в кавычках и пути не трогаем: папка с
+    именем `out` или строка «out of range» должны остаться как были.
+    """
+    import re
+
+    # Список — все имена, которыми пользуются наши макросы (см. grep "AS <имя>"
+    # по src): собираем его явно, чтобы имя не «залипло» после сбоя.
+    patterns = names or ("out", "chkout", "ncout", "nc_after", "askq", "aska",
+                         "chk_a", "chk_b", "chk_c", "chk2", "chk", "tfile",
+                         "tfinal", "tread", "marka", "markb", "markc", "markd",
+                         "marke", "pmout", "output", "inp", "snip", "rank")
+    token = file_handle("")[1:]                     # только цифровой хвост
+    for pattern in sorted(patterns, key=len, reverse=True):
+        name = rf"{re.escape(pattern)}\d*"
+        for keyword in ("AS", "TO", "CLOSE", "FROM"):
+            text = re.sub(rf"(?<=\b{keyword} ){name}\b",
+                          lambda match: match.group(0) + token, text)
+    return text

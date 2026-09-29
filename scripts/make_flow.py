@@ -16,6 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from config import OUTPUT_DIR                          # noqa: E402
+from src import pml_files                              # noqa: E402
 from src import pm_check, pm_com, pm_flow, pm_nc, pm_operation   # noqa: E402
 from src.applog import start_log                        # noqa: E402
 from src.console import Wizard, read_line               # noqa: E402
@@ -193,7 +194,22 @@ def main() -> int:
     print(f"  Макрос операции целиком (на случай ручного запуска): {macro}")
     print("  Выполняю по частям — если на чём-то споткнёмся, остальное уцелеет.")
     print()
-    parts = pm_flow.operation_parts(plan)
+
+    # Перед работой освобождаем «залипшие» имена файлов: если прошлый макрос
+    # оборвался на ошибке, PowerMill держит файл открытым до конца сессии и
+    # отвечает «handle уже используется». Ответ не проверяем — если имя не
+    # занято, PowerMill просто скажет «ошибка», и это ничему не мешает.
+    session, _message = pm_com.connect()
+    if session is not None:
+        released = pml_files.release_handles(session)
+        if released:
+            print(f"  Освободил старые имена файлов: {', '.join(released)}")
+        print()
+
+    result_file = pm_flow.new_result_file()
+    parts = pm_flow.operation_parts(plan, result_file=result_file)
+    print(f"  Отчёт макроса этого запуска: {result_file}")
+    print()
     steps_result: list[tuple[str, str, str]] = []
     for index, (part, part_path) in enumerate(parts, start=1):
         print(f"  [{index}/{len(parts)}] {part.title} …")
@@ -209,9 +225,10 @@ def main() -> int:
                                    "и этот файл можно прислать в чат.")
             print()
             print(f"  ✘ {part.title}: PowerMill не принял команду ({note})")
+            print(f"  Файл части: {part_path}")
             print(f"  Отчёт: {pm_flow.save_report(report)} (пункт 29 меню)")
             return 1
-        if not pm_flow.wait_for_part(part, before):
+        if not pm_flow.wait_for_part(part, before, result_file):
             report.add(f"Операция: {part.title}", "fail",
                        "PowerMill не дошёл до конца этой части")
             report.warnings.append(
@@ -219,31 +236,37 @@ def main() -> int:
                 f"PowerMill (там строка с ошибкой) и пришли отчёт. Файл этой части: "
                 f"{part_path}")
             print()
-            print(pm_operation.format_result(pm_operation.last_result()[0]))
+            print(pm_operation.format_result(pm_operation.last_result(result_file)[0]))
             print()
             print(f"  ✘ PowerMill не дошёл до конца части «{part.title}».")
             print("     Смотри окно сообщений самого PowerMill: там строка с ошибкой.")
             print(f"     Файл этой части: {part_path}")
+            if part.reads:
+                print("     Это часть-проверка (для отчёта): работа в проекте уже")
+                print("     сделана, можно идти дальше — напиши мне, дочитаем вместе.")
             print(f"  Отчёт: {pm_flow.save_report(report)} (пункт 29 меню)")
             return 1
-        steps_result, _note = pm_operation.last_result()
-        part_steps = [item for item in steps_result if item[0] in part.markers]
-        for line in pm_operation.format_result(part_steps).splitlines():
+        # Часть может сама написать «fail» (например, ни одно слово создания
+        # инструмента не подошло) — тогда дальше идти нет смысла.
+        failure = pm_flow.part_failure(part, result_file)
+        if failure:
+            report.add(f"Операция: {part.title}", "fail", failure)
+            report.warnings.append(f"Часть «{part.title}» сообщила об ошибке. "
+                                   "Файл части и отчёт можно прислать в чат.")
+            print(f"      ✘ {failure}")
+            print(f"  Файл части: {part_path}")
+            print(f"  Отчёт: {pm_flow.save_report(report)} (пункт 29 меню)")
+            return 1
+        for line in pm_operation.format_result(
+                pm_flow.part_steps(part, result_file)).splitlines():
             print("      " + line.strip())
+    steps_result, _note = pm_operation.last_result(result_file)
     print()
     print("  Итог по операции — по шагам выше. Что не прошло, будет видно в отчёте.")
     print()
     for step, status, detail in steps_result:
         report.add(f"Операция: {pm_operation.STEP_TITLES.get(step, step)}", status, detail)
-
-    failed = [step for step, status, _ in steps_result if status == "fail"]
-    if failed:
-        report.warnings.append("В отчёте макроса есть строки с ✘ — проверь их "
-                               "и пришли этот отчёт.")
-        pm_flow.save_report(report)
-        print()
-        print(f"  Отчёт: {pm_flow.save_report(report)} (пункт 29 меню)")
-        return 1
+    report.warnings.append(f"Отчёт макроса этого запуска: {result_file}")
 
     # ---------------- 2. проверки (3.4) ----------------
     if request.check_after and request.calculate:

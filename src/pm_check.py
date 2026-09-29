@@ -254,7 +254,8 @@ def build_macro(plan: CheckPlan) -> str:
         "PRINT $pm_done",
         "MESSAGE INFO $pm_done",
     ]
-    return "\n".join(lines) + "\n"
+    # Дескрипторы уникальны на запуск: оборванный макрос оставил бы их занятыми.
+    return pml_files.unique_handles("\n".join(lines)) + "\n"
 
 
 def write_macro(plan: CheckPlan, path: Path | str = MACRO_FILE) -> Path:

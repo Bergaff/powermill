@@ -223,7 +223,8 @@ def build_macro(plan: NcPlan, known_programs: list[str] | None = None) -> str:
         "PRINT $pm_fin",
         "MESSAGE INFO $pm_fin",
     ]
-    return "\n".join(lines) + "\n"
+    # Дескрипторы уникальны на запуск: см. src/pml_files.unique_handles.
+    return pml_files.unique_handles("\n".join(lines)) + "\n"
 
 
 def write_macro(plan: NcPlan, path: Path | str = MACRO_FILE,
