@@ -378,10 +378,15 @@ def main() -> int:
             print("  (!) Постпроцессор не задан, а без него PowerMill файл не пишет.")
             if found:
                 print("      Нашёл на компьютере — можно выбрать номером:")
-                for index, path in enumerate(found[:12], start=1):
+                hints = pm_nc.post_hints(found[:12])
+                for index, (path, hint) in enumerate(zip(found[:12], hints), start=1):
                     print(f"        {index}. {path}")
+                    if hint:
+                        print(f"           {hint}")
                 if len(found) > 12:
                     print(f"        … ещё {len(found) - 12}")
+                print("      Если стойку не знаешь — начни с Fanuc.pmoptz: он подходит")
+                print("      большинству; пост всё равно проверяет технолог станка.")
             else:
                 print("      Не нашёл .pmoptz ни в папке данных, ни в установке")
                 print("      PowerMill (file\\proc), ни в утилите постпроцессоров.")

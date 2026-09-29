@@ -411,6 +411,35 @@ def default_filename(project_folder: Path | str | None, name: str,
     return base / "ncprograms" / f"{name}{suffix}"
 
 
+# Подсказки к найденным постам: что это за пост. Мы не выбираем пост за
+# человека (стойку знает только он), но объясняем, с чего обычно начинают.
+POST_HINTS = {
+    "fanuc": "самый распространённый: Fanuc и совместимые стойки — обычно берут за основу",
+    "heidenhain": "для стоек Heidenhain (диалоговое программирование)",
+    "haas": "для станков Haas",
+    "siemens": "для стоек Siemens Sinumerik",
+    "makino": "для станков Makino",
+    "matsuura": "для станков Matsuura",
+    "fidia": "для станков Fidia",
+    "hurco": "для станков Hurco WinMax",
+    "elexa": "для стоек Elexa",
+}
+
+
+def post_hint(path: Path | str) -> str:
+    """Одна строка: что это за постпроцессор (пусто — не знаем, так и молчим)."""
+    stem = Path(path).stem.lower()
+    for key, text in POST_HINTS.items():
+        if key in stem:
+            return text
+    return ""
+
+
+def post_hints(paths: list[Path]) -> list[str]:
+    """Пояснения к списку постов — в том же порядке."""
+    return [post_hint(path) for path in paths]
+
+
 def post_dirs() -> list[Path]:
     """Где PowerMill и утилита постпроцессоров держат .pmoptz.
 

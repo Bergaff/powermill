@@ -354,6 +354,7 @@ def test_script_asks_for_the_postprocessor_before_nc():
     assert "pm_nc.saved_post()" in script
     assert "find_postprocessors" in script
     assert "NC пропущена: не задан постпроцессор" in script   # честно, а не падение
+    assert "post_hints" in script                             # подсказка про Fanuc
 
 
 # --------------------------------------------------------------------------

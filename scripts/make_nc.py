@@ -97,11 +97,16 @@ def main() -> int:
     postprocessors = pm_nc.find_postprocessors()
     if postprocessors:
         print("  Найденные постпроцессоры (.pmoptz):")
-        for index, path in enumerate(postprocessors[:12], start=1):
+        hints = pm_nc.post_hints(postprocessors[:12])
+        for index, (path, hint) in enumerate(zip(postprocessors[:12], hints), start=1):
             print(f"    {index}. {path}")
+            if hint:
+                print(f"       {hint}")
         if len(postprocessors) > 12:
             print(f"    … ещё {len(postprocessors) - 12}")
         print("    (номер можно вписать в ответ про постпроцессор — или путь)")
+        print("    Если стойку не знаешь — начни с Fanuc.pmoptz: он подходит")
+        print("    большинству стоек; точный пост подбирает технолог станка.")
     else:
         print("  Постпроцессоры (.pmoptz) не нашлись.")
         print("  Искал: папку данных, установку PowerMill (file\\proc) и утилиту")

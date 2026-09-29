@@ -301,3 +301,11 @@ def test_preview_says_when_the_project_post_is_used():
     text = "\n".join(pm_nc.preview(plan()))
     assert "НЕ задан" in text
     assert "должен быть задан файл постпроцессора" in text
+
+
+def test_post_hints_explain_known_posts_and_stay_quiet_about_unknown():
+    hints = pm_nc.post_hints([Path("Fanuc.pmoptz"), Path("Weird_XYZ.pmoptz"),
+                              Path("Heidenhain.pmoptz")])
+    assert "Fanuc" in hints[0] and "распростран" in hints[0]
+    assert hints[1] == ""                          # не знаем — не выдумываем
+    assert "Heidenhain" in hints[2]
