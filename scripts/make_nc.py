@@ -85,6 +85,12 @@ def main() -> int:
         print("  Сначала пункт 31 (черновая операция), потом пункт 35 (проверки).")
         return 0
 
+    saved_post = pm_nc.saved_post()
+    if saved_post is not None:
+        print(f"  Запомненный постпроцессор: {saved_post}")
+        if not Path(saved_post).exists():
+            print("    (!) этого файла на диске нет — возьми другой или впиши путь заново")
+        print(f"    (файл {pm_nc.POST_FILE} — можно править руками)")
     postprocessors = pm_nc.find_postprocessors()
     if postprocessors:
         print("  Найденные постпроцессоры (.pmoptz):")
@@ -92,16 +98,21 @@ def main() -> int:
             print(f"    • {path}")
         if len(postprocessors) > 8:
             print(f"    … ещё {len(postprocessors) - 8}")
+        print("    (путь можно скопировать в ответ про постпроцессор)")
     else:
-        print("  Постпроцессоры (.pmoptz) не нашлись — можно не указывать:")
-        print("  PowerMill возьмёт тот, что стоит в настройках проекта.")
+        print("  Постпроцессоры (.pmoptz) не нашлись.")
+        print("  Искал: папку данных, установку PowerMill (file\\proc) и утилиту")
+        print("  «Manufacturing Post Processor Utility» в Документах (там Generic-посты).")
     print()
 
     steps = [
         ("Имя NC-программы", "как будет в проекте", "PROGRAM"),
         ("Траектории (по порядку)", "через запятую; Enter — все", ", ".join(toolpaths)),
         ("Номер программы", "Enter — 100", "100"),
-        ("Постпроцессор (.pmoptz)", "Enter — не задавать", ""),
+        ("Постпроцессор (.pmoptz)",
+         "Enter — не задавать" if saved_post is None
+         else f"Enter — запомненный: {saved_post}",
+         str(saved_post) if saved_post is not None else ""),
         ("Выходной файл", "Enter — в папке проекта", ""),
     ]
     wizard = Wizard(steps)
@@ -146,6 +157,16 @@ def main() -> int:
             print(f"      • {problem}")
         return 1
 
+    if plan.postprocessor is None:
+        print("  (!) Постпроцессор не задан. Если в проекте его тоже нет (новый проект),")
+        print("      PowerMill откажется писать файл: «должен быть задан файл")
+        print("      постпроцессора». Возьми путь из списка выше или впиши его в")
+        print(f"      {pm_nc.POST_FILE} — и запусти пункт 36 заново.")
+        print()
+        if not ask_yes_no("  Продолжить без постпроцессора? (да/нет) [нет]: "):
+            print("Ничего не менял.")
+            return 0
+
     print("=" * 64)
     print("  ЧТО БУДЕТ СДЕЛАНО (до выполнения)")
     print("=" * 64)
@@ -160,6 +181,14 @@ def main() -> int:
     if not answer:
         print("Ничего не менял.")
         return 0
+
+    if plan.postprocessor is not None and Path(plan.postprocessor).exists():
+        answer = read_line("  Запомнить этот постпроцессор для следующих запусков?"
+                           " (да/нет) [да]: ")
+        if answer is not None and answer.strip().lower() not in (
+                "нет", "н", "no", "n", "0"):
+            pm_nc.save_post(plan.postprocessor)
+            print(f"  Запомнил: {pm_nc.POST_FILE}")
 
     macro = pm_nc.write_macro(plan, known_programs=programs)
     print()

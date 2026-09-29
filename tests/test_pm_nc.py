@@ -251,3 +251,53 @@ def test_written_file_info_is_safe(tmp_path):
 
 def test_find_postprocessors_missing_folder_is_safe(tmp_path):
     assert pm_nc.find_postprocessors(extra_dirs=[tmp_path / "нет_такой"]) == []
+
+
+# --------------------------------------------------------------------------
+# постпроцессор: без него PowerMill файл не пишет
+# --------------------------------------------------------------------------
+def test_macro_checks_the_postprocessor_file_before_writing(tmp_path):
+    """Файла поста нет — пишем причину в отчёт, а не получаем окно PowerMill."""
+    post = tmp_path / "fanuc.pmoptz"
+    post.write_text("x", encoding="utf-8")
+    code = pm_nc.build_macro(plan(postprocessor=post))
+    assert "IF file_exists($pm_pp) {" in code
+    assert "NC;postprocessor;fail;" in code
+    assert '$pm_ok = "no"' in code                 # и НЕ выводим файл вслепую
+    # команда ставится литералом пути: так делают рабочие макросы Autodesk
+    assert f"EDIT NCPROGRAM 'PROGRAM1' TAPEOPTIONS '{str(post).replace(chr(92), '/')}'" in code
+
+
+def test_macro_without_postprocessor_has_no_check():
+    code = pm_nc.build_macro(plan())
+    assert "file_exists($pm_pp)" not in code
+    assert "TAPEOPTIONS" not in code
+
+
+def test_saved_post_round_trip(tmp_path, monkeypatch):
+    monkeypatch.setattr(pm_nc, "POST_FILE", tmp_path / "postprocessor.txt")
+    assert pm_nc.saved_post() is None              # ничего не выбрано — и это не ошибка
+    post = tmp_path / "posts" / "fanuc.pmoptz"
+    post.parent.mkdir()
+    post.write_text("x", encoding="utf-8")
+    pm_nc.save_post(post)
+    assert pm_nc.saved_post() == post
+    assert "#" not in pm_nc.POST_FILE.read_text(encoding="utf-8")
+
+
+def test_find_postprocessors_looks_into_the_saved_folder_and_extra_dirs(tmp_path,
+                                                                       monkeypatch):
+    monkeypatch.setattr(pm_nc, "POST_FILE", tmp_path / "postprocessor.txt")
+    folder = tmp_path / "post"
+    (folder / "Machine").mkdir(parents=True)
+    post = folder / "Machine" / "fanuc.pmoptz"
+    post.write_text("x", encoding="utf-8")
+    assert post in pm_nc.find_postprocessors(extra_dirs=[folder])
+    pm_nc.save_post(post)
+    assert post in pm_nc.find_postprocessors()     # запомненный тоже находится
+
+
+def test_preview_says_when_the_project_post_is_used():
+    text = "\n".join(pm_nc.preview(plan()))
+    assert "НЕ задан" in text
+    assert "должен быть задан файл постпроцессора" in text

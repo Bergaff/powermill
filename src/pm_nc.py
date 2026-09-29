@@ -16,8 +16,11 @@ NC-программа из траекторий (шаг 3.5, пункт 36).
 
 * NC-файл **не проверяется на станке**; мы проверяем только то, что PowerMill
   создал программу, вложил в неё нужные траектории и записал файл;
-* постпроцессор должен соответствовать станку — если он не задан, PowerMill
-  возьмёт тот, что стоит в настройках проекта, и об этом будет сказано прямо;
+* постпроцессор должен соответствовать станку. Если он не задан, PowerMill берёт
+  тот, что стоит в настройках проекта, — а в новом (пустом) проекте его нет, и
+  вывод падает с «должен быть задан файл постпроцессора». Поэтому файл .pmoptz
+  лучше указать: выбранный путь запоминается (`DATA_ROOT/postprocessor.txt`), и
+  дальше и пункт 36, и поток берут его сами;
 * порядок траекторий в программе — тот, что указан в плане (технолог может
   поменять);
 * мы не проверяем кадры NC-файла — для этого есть NCSIMUL (он у тебя есть) или
@@ -28,6 +31,7 @@ NC-программа из траекторий (шаг 3.5, пункт 36).
 """
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -38,6 +42,11 @@ from src import pml_files
 MACRO_FILE = OUTPUT_DIR / "pm_nc.mac"
 RESULT_FILE = OUTPUT_DIR / "pm_nc_result.txt"
 STEP_MARK = "NC;"
+
+# Постпроцессор, выбранный человеком: одна строка с путём к .pmoptz рядом с
+# данными (вне Git). Его можно вписать руками — и пункт 36, и поток возьмут
+# этот путь сами, без вопросов.
+POST_FILE = DATA_ROOT / "postprocessor.txt"
 
 
 @dataclass
@@ -51,6 +60,30 @@ class NcPlan:
     postprocessor: Path | None = None          # .pmoptz (можно не задавать)
     overwrite: bool = False                    # перезаписать одноимённую программу
     result_file: Path = RESULT_FILE
+
+
+def saved_post() -> Path | None:
+    """Постпроцессор, выбранный раньше (`DATA_ROOT/postprocessor.txt`).
+
+    Читаем как есть: если файл переехал или его удалили, так и скажем при
+    проверке плана («файла постпроцессора нет»), а не подсунем битый путь молча.
+    """
+    try:
+        text = POST_FILE.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    for raw in text.splitlines():
+        line = raw.strip().strip('"')
+        if line and not line.startswith("#"):
+            return Path(line)
+    return None
+
+
+def save_post(path: Path | str) -> Path:
+    """Запоминает постпроцессор для следующих запусков (пункт 36 и поток)."""
+    POST_FILE.parent.mkdir(parents=True, exist_ok=True)
+    POST_FILE.write_text(str(path).replace("\\", "/") + "\n", encoding="utf-8")
+    return POST_FILE
 
 
 def validate_plan(plan: NcPlan) -> list[str]:
@@ -114,6 +147,7 @@ def build_macro(plan: NcPlan, known_programs: list[str] | None = None) -> str:
         'STRING $pm_add = ""',
         'STRING $pm_file = ""',
         'STRING $pm_post = ""',
+        'STRING $pm_pp = ""',
         'STRING $pm_num = ""',
         'STRING $pm_keep = ""',
         'STRING $pm_out = ""',
@@ -183,9 +217,18 @@ def build_macro(plan: NcPlan, known_programs: list[str] | None = None) -> str:
     if plan.postprocessor is not None:
         post = str(plan.postprocessor).replace("\\", "/")
         lines += [
-            "    // постпроцессор (файл .pmoptz)",
-            f"    EDIT NCPROGRAM '{safe_name}' TAPEOPTIONS '{post}'",
-            f'    $pm_post = "{STEP_MARK}postprocessor;ok;{post}"',
+            "    // постпроцессор (файл .pmoptz). Без него PowerMill отказывается",
+            "    // писать файл: «должен быть задан файл постпроцессора». Поэтому",
+            "    // сначала проверяем сам файл — иначе окно PowerMill вместо отчёта.",
+            f"    $pm_pp = '{post}'",
+            "    IF file_exists($pm_pp) {",
+            f"        EDIT NCPROGRAM '{safe_name}' TAPEOPTIONS '{post}'",
+            f'        $pm_post = "{STEP_MARK}postprocessor;ok;{post}"',
+            "    } ELSE {",
+            f'        $pm_post = "{STEP_MARK}postprocessor;fail;файла постпроцессора нет: '
+            f'{post} — вывод отменён, PowerMill без него NC не пишет"',
+            '        $pm_ok = "no"',
+            "    }",
             "    FILE WRITE $pm_post TO ncout",
         ]
 
@@ -368,38 +411,98 @@ def default_filename(project_folder: Path | str | None, name: str,
     return base / "ncprograms" / f"{name}{suffix}"
 
 
+def post_dirs() -> list[Path]:
+    """Где PowerMill и утилита постпроцессоров держат .pmoptz.
+
+    По опыту и документации Autodesk файлы постпроцессоров лежат:
+
+    * в установке PowerMill — подпапка `file\\proc` (у нас PowerMill на E:);
+    * у «Manufacturing Post Processor Utility» (идёт с PowerMill) —
+      `C:\\Users\\Public\\Documents\\Autodesk\\Manufacturing Post Processor Utility
+      <версия>\\Generic` (там generic-посты: Fanuc, Heidenhain, Siemens…);
+    * у старых версий — `C:\\dcam\\config\\ductpost`;
+    * плюс наша папка данных (человек мог просто положить файл рядом).
+    """
+    dirs: list[Path] = [DATA_ROOT, DATA_ROOT / "post", DATA_ROOT / "output" / "post",
+                        Path("C:/dcam/config/ductpost"),
+                        Path("C:/dcam/config/postprocessor")]
+    docs: list[Path] = []
+    for var in ("PUBLIC", "USERPROFILE"):
+        base = os.environ.get(var)
+        if base:
+            docs.append(Path(base) / "Documents")
+    for base in docs:
+        for pattern in ("Autodesk/Manufacturing Post Processor Utility*",
+                        "Manufacturing Post Processor Utility*",
+                        "Autodesk/PowerMill*"):
+            try:
+                dirs.extend(sorted(base.glob(pattern)))
+            except OSError:
+                continue
+    for letter in "CDEFGH":
+        root = Path(f"{letter}:/")
+        try:
+            if not root.exists():
+                continue
+        except OSError:
+            continue
+        for pattern in ("powermill*", "PowerMill*", "Autodesk/PowerMill*",
+                        "Program Files/Autodesk/PowerMill*",
+                        "Program Files (x86)/Autodesk/PowerMill*"):
+            try:
+                dirs.extend(sorted(root.glob(pattern)))
+            except OSError:
+                continue
+    return [folder for folder in dirs if folder.exists()]
+
+
 def find_postprocessors(extra_dirs: list[Path] | None = None,
-                        limit: int = 30) -> list[Path]:
+                        limit: int = 40) -> list[Path]:
     """Ищет файлы постпроцессоров (.pmoptz) — чтобы предложить выбор в мастере."""
     roots: list[Path] = list(extra_dirs or [])
-    for candidate in (
-        DATA_ROOT / "post",
-        DATA_ROOT / "output" / "post",
-        Path("C:/Program Files/Autodesk/PowerMill 2026/lib/post"),
-        Path("C:/Program Files/Autodesk/PowerMill 2026/file/post"),
-    ):
-        roots.append(candidate)
-    # установки PowerMill на диске E (частый случай: E:\powermill 2026\…)
-    for root in (Path("E:/"), Path("D:/")):
-        if not root.exists():
-            continue
-        try:
-            roots.extend(sorted(root.glob("powermill*/**/post"), reverse=True)[:3])
-        except OSError:
-            continue
+    saved = saved_post()
+    if saved is not None:
+        roots.append(saved.parent)                  # там, где он лежал в прошлый раз
+    roots.extend(post_dirs())
 
     found: list[Path] = []
+    seen: set[str] = set()
+
+    def add(path: Path) -> bool:
+        key = str(path).lower()
+        if key in seen:
+            return False
+        seen.add(key)
+        found.append(path)
+        return len(found) >= limit
+
     for folder in roots:
-        if not folder or not Path(folder).exists():
-            continue
         try:
-            for path in sorted(Path(folder).glob("*.pmoptz")):
-                if path not in found:
-                    found.append(path)
-        except OSError:
+            folder = Path(folder)
+        except (TypeError, ValueError):
             continue
-        if len(found) >= limit:
-            break
+        if not folder.is_dir():
+            continue
+        # прямо в папке + известные подпапки, потом — неглубоко внутрь
+        # (в утилите постов они разложены по станкам)
+        shallow = [folder, folder / "file" / "proc", folder / "file" / "post",
+                   folder / "Generic", folder / "postprocessor", folder / "post"]
+        for candidate in shallow:
+            if not candidate.is_dir():
+                continue
+            try:
+                for path in sorted(candidate.glob("*.pmoptz")):
+                    if add(path):
+                        return found[:limit]
+            except OSError:
+                continue
+        for pattern in ("*/*.pmoptz", "*/*/*.pmoptz", "*/*/*/*.pmoptz"):
+            try:
+                for path in sorted(folder.glob(pattern)):
+                    if add(path):
+                        return found[:limit]
+            except OSError:
+                continue
     return found[:limit]
 
 
@@ -416,7 +519,9 @@ def preview(plan: NcPlan) -> list[str]:
     if plan.postprocessor is not None:
         lines.append(f"  4. Постпроцессор: {plan.postprocessor}")
     else:
-        lines.append("  4. Постпроцессор: как в настройках проекта (не меняю)")
+        lines.append("  4. Постпроцессор: НЕ задан — берётся из настроек проекта")
+        lines.append("     (в новом проекте его нет, и PowerMill откажет: «должен быть"
+                     " задан файл постпроцессора»)")
     lines.append("  5. Вывод файла: ACTIVATE NCPROGRAM … KEEP NCPROGRAM ;"
                  " (если PowerMill спросит подтверждение, макрос ответит «Да»)")
     if plan.overwrite:

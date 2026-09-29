@@ -343,3 +343,14 @@ def test_script_checks_for_a_taken_toolpath_name():
 
 def test_live_toolpath_names_without_powermill_is_empty():
     assert pm_flow.live_toolpath_names() == []      # в песочнице PowerMill нет
+
+
+# --------------------------------------------------------------------------
+# NC в потоке: без постпроцессора PowerMill файл не пишет
+# --------------------------------------------------------------------------
+def test_script_asks_for_the_postprocessor_before_nc():
+    script = Path(__file__).resolve().parent.parent.joinpath(
+        "scripts", "make_flow.py").read_text(encoding="utf-8")
+    assert "pm_nc.saved_post()" in script
+    assert "find_postprocessors" in script
+    assert "NC пропущена: не задан постпроцессор" in script   # честно, а не падение

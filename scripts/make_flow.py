@@ -364,18 +364,56 @@ def main() -> int:
                 programs = session.section_names("ncprograms")
             except Exception:                              # noqa: BLE001
                 programs = []
-        nc_plan = pm_nc.NcPlan(
+        # Постпроцессор обязателен: без него PowerMill отказывается писать NC
+        # («должен быть задан файл постпроцессора»), и в новом проекте его нет.
+        post = request.postprocessor or pm_nc.saved_post()
+        if post is not None and not Path(post).exists():
+            print(f"  (!) Постпроцессора нет на диске: {post}")
+            post = None
+        if post is None:
+            found = pm_nc.find_postprocessors()
+            print("  (!) Постпроцессор не задан, а без него PowerMill файл не пишет.")
+            if found:
+                print("      Нашёл на компьютере (можно скопировать путь):")
+                for path in found[:8]:
+                    print(f"        • {path}")
+            else:
+                print("      Не нашёл .pmoptz ни в папке данных, ни в установке")
+                print("      PowerMill (file\\proc), ни в утилите постпроцессоров.")
+            print(f"      Путь можно вписать в {pm_nc.POST_FILE} — и запустить заново.")
+            text = read_line("  Путь к файлу постпроцессора (.pmoptz),"
+                             " Enter — пропустить NC: ")
+            if text is not None and text.strip():
+                post = Path(text.strip().strip('"'))
+                if post.exists():
+                    pm_nc.save_post(post)
+                    print(f"  Запомнил постпроцессор: {pm_nc.POST_FILE}")
+                else:
+                    print(f"  (!) Такого файла нет: {post}")
+                    post = None
+        if post is None:
+            print("  NC-программа пропущена: без файла постпроцессора PowerMill её не выведет.")
+            print("  (Пункт 36 умеет найти постпроцессоры и запомнить выбранный.)")
+            report.warnings.append("NC пропущена: не задан постпроцессор — PowerMill без "
+                                   "него файл не пишет")
+            report.add("NC-программа", "skip", "не задан постпроцессор")
+            print()
+
+        nc_plan = None if post is None else pm_nc.NcPlan(
             name=request.nc_name,
             toolpaths=[plan.toolpath_name],
             number=request.nc_number,
-            postprocessor=request.postprocessor,
+            postprocessor=post,
             filename=pm_nc.default_filename(request.project_folder, request.nc_name),
             overwrite=any(p.lower() == request.nc_name.lower() for p in programs),
         )
-        nc_macro = pm_nc.write_macro(nc_plan, known_programs=programs)
+        nc_macro = None if nc_plan is None else pm_nc.write_macro(nc_plan,
+                                                                  known_programs=programs)
         before = time.time()
-        ok, note = run_macro(nc_macro)
-        if not ok:
+        ok, note = (False, "нет постпроцессора") if nc_macro is None else run_macro(nc_macro)
+        if nc_macro is None:
+            pass                                  # уже объяснили и записали в отчёт
+        elif not ok:
             report.warnings.append("NC не вывелась: " + (note or "нет ответа"))
         else:
             print("  Жду отчёт вывода NC (до 3 минут)…")
