@@ -124,18 +124,37 @@ def legacy_handles() -> tuple[str, ...]:
 def release_handles(session, names: tuple[str, ...] | None = None) -> list[str]:
     """Пробует освободить «залипшие» имена файлов после оборванного макроса.
 
-    Результат не проверяем: если имя не занято, PowerMill просто ответит
-    ошибкой команды — это нормально и никому не мешает. `session` — любой
-    объект с методом `execute(команда)` (у нас это `src.pm_com.LiveSession`).
+    Делается **молча**: команды идут с выключенными окнами PowerMill
+    (`DIALOGS MESSAGE OFF` / `DIALOGS ERROR OFF`), потому что закрывать мы
+    пробуем и те имена, которые НЕ открыты, а на это PowerMill отвечает
+    «неизвестный handle: <имя>». Раньше это окно выскакивало человеку и
+    выглядело как поломка — хотя на самом деле ничего не произошло.
+
+    `session` — любой объект с методом `execute(команда)` (у нас
+    `src.pm_com.LiveSession`). Возвращаем имена, которые попробовали закрыть:
+    какое из них действительно было открыто, PowerMill не сообщает.
     """
-    released: list[str] = []
-    for name in (names if names is not None else legacy_handles()):
-        try:
-            session.execute(f"FILE CLOSE {name}")
-            released.append(name)
-        except Exception:  # noqa: BLE001
-            continue
-    return released
+    attempted: list[str] = []
+    try:
+        session.execute("DIALOGS MESSAGE OFF")
+        session.execute("DIALOGS ERROR OFF")
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        for name in (names if names is not None else legacy_handles()):
+            try:
+                session.execute(f"FILE CLOSE {name}")
+            except Exception:  # noqa: BLE001
+                continue
+            attempted.append(name)
+    finally:
+        # окна возвращаем как были, даже если что-то оборвалось
+        for command in ("DIALOGS ERROR ON", "DIALOGS MESSAGE ON"):
+            try:
+                session.execute(command)
+            except Exception:  # noqa: BLE001
+                pass
+    return attempted
 
 
 def unique_handles(text: str, names: tuple[str, ...] | None = None) -> str:

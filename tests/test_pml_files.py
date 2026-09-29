@@ -192,10 +192,47 @@ def test_release_handles_asks_power_mill_and_ignores_answers():
             calls.append(command)
             return (True, "ошибка")       # файл не был открыт — ответ не важен
 
-    released = pml_files.release_handles(Session())
+    attempted = pml_files.release_handles(Session())
+    closes = [command for command in calls if command.startswith("FILE CLOSE ")]
+    assert "FILE CLOSE out" in closes and "FILE CLOSE chkout" in closes
+    assert attempted == [command.split()[-1] for command in closes]
+
+
+def test_release_handles_silences_power_mill_dialogs():
+    """Иначе на «FILE CLOSE chkout» человеку выскакивало «неизвестный handle».
+
+    Имя может быть не открыто — и это нормально: мы угадываем, что осталось
+    от оборванного макроса. Окна на время уборки выключаются и возвращаются
+    обратно (даже если что-то оборвалось).
+    """
+    calls: list[str] = []
+
+    class Session:
+        def execute(self, command):
+            calls.append(command)
+            return (True, "ок")
+
+    pml_files.release_handles(Session())
+    assert calls[0] == "DIALOGS MESSAGE OFF"
+    assert calls[1] == "DIALOGS ERROR OFF"
+    assert calls[-2:] == ["DIALOGS ERROR ON", "DIALOGS MESSAGE ON"]
+
+
+def test_release_handles_restores_dialogs_after_a_failure():
+    import pytest as _pytest
+
+    calls: list[str] = []
+
+    class Session:
+        def execute(self, command):
+            calls.append(command)
+            if command == "FILE CLOSE chkout":
+                raise RuntimeError("PowerMill закрылся")
+            return (True, "ок")
+
+    pml_files.release_handles(Session())
+    assert calls[-2:] == ["DIALOGS ERROR ON", "DIALOGS MESSAGE ON"]
     assert "FILE CLOSE out" in calls
-    assert released                       # имена «попробовали» освободить
-    assert all(command.startswith("FILE CLOSE ") for command in calls)
 
 
 def test_release_handles_survives_a_broken_bridge():
@@ -216,3 +253,79 @@ def test_unique_handles_does_not_touch_paths():
     assert '"out of range"' in fixed
     handle = fixed.split(" AS ")[1].split("\n")[0]
     assert handle != "out" and handle.startswith("out")
+
+
+# --------------------------------------------------------------------------
+# Общая проверка всех наших макросов: файл открыт раньше, чем в него пишут
+# --------------------------------------------------------------------------
+def _handle_problems(text: str) -> list[str]:
+    """Строки, которые обращаются к неоткрытому дескриптору файла."""
+    import re
+
+    opened: set[str] = set()
+    bad: list[str] = []
+    for line in text.splitlines():
+        line = line.strip()
+        match = re.search(r"FILE OPEN \S+ FOR \w+ AS (\w+)", line)
+        if match:
+            opened.add(match.group(1))
+            continue
+        match = re.search(r"FILE (?:WRITE \S+|READ \S+) (?:TO|FROM) (\w+)", line)
+        if match and match.group(1) not in opened:
+            bad.append(line)
+        match = re.search(r"FILE CLOSE (\w+)", line)
+        if match and match.group(1) not in opened:
+            bad.append(line)
+    return bad
+
+
+def test_all_our_macros_open_files_before_using_them():
+    """У каждого дескриптора в макросе есть свой `FILE OPEN`.
+
+    Так ловится рассогласование после переименования дескрипторов: PowerMill на
+    неизвестный handle отвечает «неизвестный handle: <имя>» и останавливает
+    макрос — а отличить это от ошибки в проекте трудно.
+    """
+    from src import pm_check, pm_edit, pm_macro, pm_nc, pm_operation
+
+    operation = pm_operation.OperationPlan(
+        toolpath_name="Chernovaya_D16", tool_name="D16_Freza", rpm=2980,
+        feed=950, plunge=570, calculate=True)
+    for plan in (operation, pm_operation.OperationPlan(
+            toolpath_name="C", tool_name="D16", create_tool=False)):
+        # части проверяем так, как их увидит PowerMill: файлом, вместе с
+        # открытием файла отчёта (в тексте самой части этого открытия нет)
+        import tempfile
+
+        folder = Path(tempfile.mkdtemp())
+        for _part, path in pm_operation.write_parts(plan, folder=folder):
+            text = path.read_text(encoding="cp1251")
+            assert not _handle_problems(text), path.name
+        assert not _handle_problems(pm_operation.build_macro(plan))
+
+    assert not _handle_problems(pm_check.build_macro(
+        pm_check.CheckPlan(toolpaths=["Chernovaya_D16", "Vtoraya"])))
+    assert not _handle_problems(pm_nc.build_macro(
+        pm_nc.NcPlan(toolpaths=["Chernovaya_D16"], name="NC1", number=1)))
+    assert not _handle_problems(pm_edit.edit_macro(
+        [pm_edit.SpeedFeed(toolpath="Chernovaya_D16", spindle=2980, feed=950)]))
+    for text in (pm_macro.test_macro(), pm_macro.ask_macro(), pm_macro.snapshot_macro()):
+        assert not _handle_problems(text)
+
+
+def test_parts_and_check_macros_never_reuse_a_handle_name():
+    """Имена дескрипторов не повторяются между частями и макросами одного потока."""
+    import re
+
+    from src import pm_check, pm_operation
+
+    operation = pm_operation.OperationPlan(toolpath_name="C", tool_name="D16",
+                                          rpm=2980, feed=950, calculate=True)
+    texts = [part.text("h") for part in pm_operation.build_parts(operation)]
+    texts.append(pm_check.build_macro(pm_check.CheckPlan(toolpaths=["C"])))
+    names: list[str] = []
+    for text in texts:
+        for command in text.splitlines():
+            if "FILE OPEN" in command:
+                names += re.findall(r"FOR \w+ AS (\w+)", command)
+    assert len(names) == len(set(names))
