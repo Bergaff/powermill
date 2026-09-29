@@ -867,6 +867,132 @@ def selftest(log=print) -> int:
     return 0
 
 
+def probe(log=print, timeout: float = 180.0) -> int:
+    """Проверяет сервер так, как это делает ИИ-клиент: отдельным процессом.
+
+    Самопроверка (`selftest`) работает внутри этого же процесса, а клиент
+    запускает **новый** python, отдельный процесс и общается с ним по
+    stdin/stdout. Разница принципиальная: тут проверяется и путь к python, и
+    путь к серверу, и то, что в поток протокола ничего лишнего не попадает.
+    Поэтому перед подключением клиента полезно увидеть именно это.
+    """
+    import subprocess
+
+    python = Path(sys.executable)
+    script = PROJECT_ROOT / "scripts" / "mcp_server.py"
+    log("=" * 60)
+    log("  ПРОВЕРКА «КАК ЭТО УВИДИТ ИИ-КЛИЕНТ»")
+    log("=" * 60)
+    log("  Клиент запускает такой процесс:")
+    log(f"    {python}")
+    log(f"    {script}")
+    log("  и говорит с ним по стандартному вводу-выводу (JSON-RPC).")
+    log("")
+    if not script.exists():
+        log(f"  ✘ Нет файла {script} — сервер не найти.")
+        return 2
+
+    messages = [
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+         "params": {"protocolVersion": DEFAULT_PROTOCOL,
+                    "clientInfo": {"name": "PowerMill AI probe", "version": "0.1"}}},
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+        {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+         "params": {"name": "powermill_cutting",
+                    "arguments": {"request": "Сталь 40Х, фреза D16, черновая"}}},
+        {"jsonrpc": "2.0", "id": 4, "method": "resources/read",
+         "params": {"uri": "powermill://status"}},
+    ]
+    started = time.time()
+    try:
+        done = subprocess.run(
+            [str(python), str(script)],
+            input="\n".join(json.dumps(item, ensure_ascii=False)
+                             for item in messages) + "\n",
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=timeout, cwd=str(PROJECT_ROOT))
+    except subprocess.TimeoutExpired:
+        log(f"  ✘ Сервер не ответил за {timeout:.0f} с — он завис?")
+        log("    Проверь: нет ли долгого импорта (PowerMill/ChromaDB) в начале.")
+        return 2
+    except OSError as error:
+        log(f"  ✘ Не смог запустить процесс: {error}")
+        return 2
+    spent = time.time() - started
+
+    problems: list[str] = []
+    if done.returncode != 0:
+        problems.append(f"процесс закончился с кодом {done.returncode}")
+    answers: dict[object, dict] = {}
+    not_json: list[str] = []
+    for line in done.stdout.splitlines():
+        if not line.strip():
+            continue
+        try:
+            item = json.loads(line)
+        except ValueError:
+            not_json.append(line)
+            continue
+        if isinstance(item, dict):
+            answers[item.get("id", "уведомление")] = item
+    if not_json:
+        problems.append("в ответе есть строки не JSON — клиент такой сервер "
+                        "не поймёт")
+        for line in not_json[:3]:
+            log("    лишняя строка: " + line[:100])
+
+    hello = answers.get(1, {})
+    if "result" in hello:
+        info = hello["result"]
+        log(f"  ✔ Знакомство за {spent:.1f} с: {info['serverInfo']['name']} "
+            f"{info['serverInfo']['version']}")
+    else:
+        problems.append("знакомство не прошло")
+
+    listed = answers.get(2, {})
+    tools = [item["name"] for item in listed.get("result", {}).get("tools", [])]
+    if tools:
+        log(f"  ✔ Клиент увидит {len(tools)} инструментов: {', '.join(tools)}")
+    else:
+        problems.append("список инструментов не пришёл")
+
+    called = answers.get(3, {}).get("result", {})
+    text = (called.get("content") or [{}])[0].get("text", "")
+    if called and not called.get("isError") and "S (об/мин)" in text:
+        numbers = [line.strip() for line in text.splitlines()
+                   if line.strip().startswith(("S (об/мин)", "F (мм/мин)",
+                                               "ap (мм)", "ae (мм)"))]
+        log("  ✔ Инструмент powermill_cutting ответил:")
+        for line in numbers:
+            log("      " + line)
+    else:
+        problems.append("расчёт режимов через отдельный процесс не ответил")
+
+    resource = answers.get(4, {}).get("result", {})
+    if resource.get("contents"):
+        short = resource["contents"][0]["text"].splitlines()
+        first = next((line for line in short if line.strip()), "")
+        log(f"  ✔ Ресурс powermill://status читается: {first[:80]}")
+    else:
+        problems.append("ресурс powermill://status не прочитался")
+
+    if done.stderr.strip():
+        log("")
+        log("  Что сервер написал в stderr (клиент это тоже увидит в логе):")
+        for line in done.stderr.strip().splitlines()[:5]:
+            log("    " + line)
+
+    log("")
+    if problems:
+        log("  ОШИБКИ: " + "; ".join(problems))
+        log("  Полный stderr: " + (done.stderr.strip()[-500:] or "(пусто)"))
+        return 2
+    log("  ВСЁ В ПОРЯДКЕ: клиент получит и инструменты, и ответы.")
+    log("  Дальше: пункт 44 меню — прописать сервер в сам клиент.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse
 
@@ -876,10 +1002,15 @@ def main(argv: list[str] | None = None) -> int:
                         help="проверить сервер и выйти (без клиента)")
     parser.add_argument("--tools", action="store_true",
                         help="показать список инструментов человеку")
+    parser.add_argument("--probe", action="store_true",
+                        help="проверить сервер так, как это делает ИИ-клиент "
+                             "(отдельным процессом)")
     args = parser.parse_args(argv)
 
     if args.selftest:
         return selftest()
+    if args.probe:
+        return probe()
     if args.tools:
         server = McpServer()
         print(f"MCP-сервер {SERVER_NAME} {SERVER_VERSION}: "

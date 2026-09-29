@@ -61,12 +61,27 @@ def _appdata() -> Path:
     return Path(os.getenv("APPDATA", str(Path.home())))
 
 
+def _localappdata() -> Path:
+    return Path(os.getenv("LOCALAPPDATA", str(Path.home())))
+
+
+# Claude из Microsoft Store держит настройки не рядом с другими программами,
+# а внутри своей «песочницы» — путь нестандартный, но именно его читает клиент.
+CLAUDE_STORE = (_localappdata() / "Packages" / "Claude_pzs8sxrjxfjjc" /
+                "LocalCache" / "Roaming" / "Claude" /
+                "claude_desktop_config.json")
+
+
 def clients() -> list[Client]:
     home = Path.home()
     return [
         Client("claude", "Claude Desktop (приложение)",
                _appdata() / "Claude" / "claude_desktop_config.json", "mcpServers",
                note="после записи закрой и снова открой Claude"),
+        Client("claude-store", "Claude Desktop из Microsoft Store",
+               CLAUDE_STORE, "mcpServers",
+               note="версия из Store хранит настройки внутри своей папки — "
+                    "она найдена автоматически"),
         Client("cursor", "Cursor",
                home / ".cursor" / "mcp.json", "mcpServers",
                note="в Cursor: Settings -> MCP — там будет видно инструменты"),
@@ -74,6 +89,9 @@ def clients() -> list[Client]:
                _appdata() / "Code" / "User" / "mcp.json", "servers",
                with_type=True,
                note="в VS Code: панель Copilot -> Agent -> MCP Servers"),
+        Client("vscode-insiders", "VS Code Insiders",
+               _appdata() / "Code - Insiders" / "User" / "mcp.json", "servers",
+               with_type=True),
         Client("windsurf", "Windsurf",
                home / ".codeium" / "windsurf" / "mcp_config.json", "mcpServers"),
         Client("project", "Этот проект (Claude Code и другие клиенты рядом с кодом)",
@@ -244,6 +262,11 @@ def report_lines(done: list[str]) -> list[str]:
         lines.extend(f"  • {client.title}: {client.path}" for client in found)
     else:
         lines.append("  • пока нигде")
+    installed = [client for client in clients() if client.path.exists()]
+    if not installed:
+        lines += ["", "ИИ-клиентов с MCP на этом компьютере не нашлось — это нормально:",
+                  "окно, лента и панель PowerMill работают без них. Поставишь",
+                  "Claude Desktop / Cursor / VS Code — запусти пункт 44 заново."]
 
     lines += ["", "Как проверить в клиенте:"]
     lines += [
@@ -367,15 +390,25 @@ def main(argv: list[str] | None = None) -> int:
         for client in existing:
             if args.yes or ask_yes(f"  Прописать в «{client.title}»?", True):
                 done.extend(write_config(client))
+    if not existing:
+        # Клиентов на компьютере нет — это не ошибка: MCP просто «на будущее».
+        print("Ни одного ИИ-клиента с MCP на этом компьютере не нашлось.")
+        print("Это не мешает работе: окно приложения, лента и панель PowerMill")
+        print("работают и без клиента. Поставишь Claude Desktop, Cursor или")
+        print("VS Code — запусти пункт 44 заново, он найдёт и пропишет сам.")
+        print()
     if not done:
         project = find_client("project")
         assert project is not None
-        print("Готовый блок (вставь в настройки MCP своего клиента):")
+        print("Готовый блок — его можно вставить в настройки MCP клиента")
+        print("в любой момент (он же сохранится в отчёте):")
         print()
         print(json_text())
         print()
-        if args.yes or ask_yes("  Записать его в файл .mcp.json рядом с кодом? "
-                               "(его читают клиенты, запущенные в этой папке)", True):
+        if args.yes or ask_yes(
+                "  Записать блок в файл .mcp.json рядом с кодом? "
+                "(его читают клиенты, запущенные в папке проекта; файл в "
+                "списке исключений git)", True):
             done.extend(write_config(project))
 
     print()

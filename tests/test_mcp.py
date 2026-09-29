@@ -532,3 +532,113 @@ def test_bats_for_mcp_are_double_clickable():
         assert "venv\\Scripts\\python.exe" in text, name
         assert "pause" in text, name
         assert path.read_bytes().count(b"\r\n") > 5, name
+
+
+# --------------------------------------------------------------------------
+# Проверка «как это увидит клиент»: сервер отдельным процессом
+# --------------------------------------------------------------------------
+def test_probe_runs_the_server_like_a_client_does(capsys):
+    lines: list[str] = []
+    assert mcp_server.probe(log=lines.append) == 0
+    text = "\n".join(lines)
+    assert "как это увидит ИИ-клиент" in text.lower() or "КАК ЭТО УВИДИТ" in text
+    assert "9 инструментов" in text
+    assert "S (об/мин)" in text                    # ответ настоящего инструмента
+    assert "ВСЁ В ПОРЯДКЕ" in text
+
+
+def test_probe_notices_a_broken_server(monkeypatch, tmp_path):
+    """Если сервер не запускается — проверка обязана сказать это, а не молчать."""
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    (scripts / "mcp_server.py").write_text("import sys; sys.exit(3)",
+                                           encoding="utf-8")
+    monkeypatch.setattr(mcp_server, "PROJECT_ROOT", tmp_path)
+    lines: list[str] = []
+    assert mcp_server.probe(log=lines.append) == 2
+    text = "\n".join(lines)
+    assert "ОШИБКИ" in text
+    assert "кодом 3" in text                      # видно, как именно сломалось
+
+
+def test_server_starts_from_any_working_directory():
+    """Клиент запускает сервер со своим рабочим каталогом — это не должно мешать."""
+    messages = [
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+         "params": {"protocolVersion": "2024-11-05"}},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+         "params": {"name": "powermill_cutting",
+                    "arguments": {"request": "Сталь 40Х, фреза D12, черновая"}}},
+    ]
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as anywhere:
+        process = subprocess.run(
+            [sys.executable, str(PROJECT_ROOT / "scripts" / "mcp_server.py")],
+            input="\n".join(json.dumps(item, ensure_ascii=False)
+                            for item in messages) + "\n",
+            capture_output=True, text=True, encoding="utf-8", timeout=300,
+            cwd=anywhere)
+    assert process.returncode == 0, process.stderr
+    answers = [json.loads(line) for line in process.stdout.splitlines() if line.strip()]
+    assert len(answers) == 2
+    text = answers[1]["result"]["content"][0]["text"]
+    assert "S (об/мин)" in text
+
+
+def test_entry_prefers_venv_of_the_project(tmp_path, monkeypatch):
+    """На компьютере окружение может называться venv (старая установка) или .venv."""
+    from scripts import mcp_setup
+
+    made = tmp_path / "venv" / "bin"
+    made.mkdir(parents=True)
+    (made / "python").write_text("", encoding="utf-8")
+    monkeypatch.setattr(mcp_setup, "PROJECT_ROOT", tmp_path)
+    python, source = mcp_setup.server_python()
+    assert python == made / "python"
+    assert "venv" in source
+
+
+def test_setup_says_it_is_fine_when_no_clients_installed(monkeypatch, tmp_path,
+                                                         capfd):
+    """Клиентов нет — это не ошибка: объясняем и предлагаем блок настроек."""
+    from scripts import mcp_setup
+
+    absent = [mcp_setup.Client("claude", "Claude Desktop",
+                               tmp_path / "нет" / "claude_desktop_config.json",
+                               "mcpServers"),
+              mcp_setup.Client("project", "Этот проект",
+                               tmp_path / "нет" / ".mcp.json", "mcpServers")]
+    monkeypatch.setattr(mcp_setup, "clients", lambda: absent)
+    monkeypatch.setattr(mcp_setup, "REPORT_FILE", tmp_path / "mcp_report.txt")
+    assert mcp_setup.main(["--yes"]) == 0
+    text = capfd.readouterr().out
+    assert "не нашлось" in text
+    assert "работают и без клиента" in text
+    # и всё-таки записали блок (ответ --yes) — в файл рядом с кодом
+    written = absent[1].path
+    assert mcp_setup.SERVER_NAME in json.loads(
+        written.read_text(encoding="utf-8"))["mcpServers"]
+    # и он же остался в отчёте, чтобы вставить руками
+    assert "mcpServers" in (tmp_path / "mcp_report.txt").read_text(encoding="utf-8")
+
+
+def test_client_list_covers_unusual_install_locations():
+    """Claude из Store и VS Code Insiders держат настройки в других местах."""
+    from scripts import mcp_setup
+
+    keys = {client.key for client in mcp_setup.clients()}
+    for expected in ("claude", "claude-store", "cursor", "vscode",
+                     "vscode-insiders", "windsurf", "project"):
+        assert expected in keys, expected
+    store = next(client for client in mcp_setup.clients()
+                 if client.key == "claude-store")
+    assert "Packages" in str(store.path)          # песочница Store-версии
+    assert store.top_key == "mcpServers"
+
+
+def test_probe_is_available_from_the_menu_bat():
+    text = (PROJECT_ROOT / "scripts" / "mcp_server.bat").read_text(
+        encoding="utf-8", errors="replace")
+    assert "--selftest" in text
+    assert "--probe" in text                      # проверка «как у клиента» тоже
