@@ -357,6 +357,7 @@ def tool_read_report(name: str = "doctor_report.txt") -> str:
 REPORTS: tuple[tuple[str, str], ...] = (
     ("doctor_report.txt", "Проверка компьютера: что готово, что нет (пункт 40)"),
     ("pm_link_report.txt", "Связь с PowerMill: проверка делом (пункт 41)"),
+    ("pm_link_setup_report.txt", "Связка с PowerMill: мост, макросы, связь (пункт 47)"),
     ("pm_flow_report.txt", "Полный поток «СДЕЛАЙ»: план, выполнение, проверки, NC"),
     ("pm_operation_report.txt", "Черновая операция: что собралось (пункт 31)"),
     ("pm_check_report.txt", "Проверки траекторий: зарезы и столкновения (пункт 35)"),

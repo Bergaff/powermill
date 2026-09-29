@@ -39,6 +39,7 @@ KNOWN_REPORTS = (
     ("pm_plugin_build_report.txt", "Сборка плагина-панели (шаг 2.3б, пункт 38)"),
     ("doctor_report.txt", "Проверка компьютера (пункт 40)"),
     ("pm_link_report.txt", "Проверка связи с PowerMill (пункт 41)"),
+    ("pm_link_setup_report.txt", "Связка с PowerMill: мост, макросы, связь (пункт 47)"),
     ("install_packages_report.txt", "Библиотеки: что стоит, чего нет (пункт 43)"),
     ("data_root_report.txt", "Смена папки данных (пункт 42)"),
     ("mcp_report.txt", "Подключение к ИИ-клиенту по MCP (пункт 44)"),

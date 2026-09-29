@@ -75,12 +75,14 @@ echo     45  -  Проверить MCP-сервер (что он умеет)
 echo.
 echo     46  -  Расходы на ИИ и лимиты (облачный API)
 echo.
+echo     47  -  Связка с PowerMill: мост -> макросы -> проверка делом
+echo.
 echo      0  -  Выход
 echo.
 echo   Внутри любых экранов слово  «назад»  или  «меню»
 echo   возвращает к этому списку.
 echo.
-set /p choice="   Выбор (0-46): "
+set /p choice="   Выбор (0-47): "
 
 if "%choice%"=="1"  goto chat
 if "%choice%"=="2"  goto search
@@ -128,6 +130,7 @@ if "%choice%"=="43" goto deps
 if "%choice%"=="44" goto mcp
 if "%choice%"=="45" goto mcpserver
 if "%choice%"=="46" goto spend
+if "%choice%"=="47" goto linksetup
 if "%choice%"=="0"  exit /b 0
 if /i "%choice%"=="назад" exit /b 0
 if /i "%choice%"=="меню" goto menu
@@ -279,6 +282,10 @@ goto menu
 
 :spend
 call "%~dp0scripts\api_budget.bat"
+goto menu
+
+:linksetup
+call "%~dp0scripts\link_setup.bat"
 goto menu
 
 :pmmacros

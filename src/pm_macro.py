@@ -27,6 +27,7 @@ PowerMill умеет и сам, стандартными командами PML:
 """
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 from config import DATA_ROOT, OUTPUT_DIR
@@ -446,6 +447,34 @@ def write_all(folder: Path | None = None) -> list[Path]:
         written.append(path)
 
     return written
+
+
+def copy_into_power_mill(names: list[str] | None = None
+                         ) -> tuple[list[Path], list[tuple[Path, str]]]:
+    """Кладёт наши макросы в папки PowerMill — чтобы он их видел в списке.
+
+    Возвращает (скопированные, [(папка, ошибка)]). Ошибки не выбрасываются:
+    папка `lib\macro` часто под защитой прав администратора, и тогда честнее
+    сказать «копия не удалась, запусти макрос из нашей папки», чем упасть.
+    """
+    if names is None:
+        names = [path.name for path in sorted(MACRO_DIR.glob("PM_AI_*.mac"))]
+    copied: list[Path] = []
+    failed: list[tuple[Path, str]] = []
+    for folder in power_mill_macro_folders():
+        for name in names:
+            source = MACRO_DIR / name
+            if not source.exists():
+                continue
+            try:
+                shutil.copy2(source, folder / name)
+            except OSError as error:
+                failed.append((folder, f"{error} (файл: {name})"))
+                continue
+            target = folder / name
+            if target not in copied:
+                copied.append(target)
+    return copied, failed
 
 
 def power_mill_macro_folders() -> list[Path]:

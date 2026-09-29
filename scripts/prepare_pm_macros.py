@@ -13,7 +13,6 @@
 """
 from __future__ import annotations
 
-import shutil
 import sys
 from pathlib import Path
 
@@ -64,21 +63,12 @@ def main() -> int:
     printer.print()
 
     folders = pm_macro.power_mill_macro_folders()
-    copied: list[Path] = []
-    failed: list[Path] = []
+    copied, failures = pm_macro.copy_into_power_mill(macro_names())
+    failed = [folder for folder, _error in failures]
     if folders:
         printer.print("Копирую в папки макросов PowerMill:")
-        for folder in folders:
-            for name in macro_names():
-                source = pm_macro.MACRO_DIR / name
-                if not source.exists():
-                    continue
-                try:
-                    shutil.copy2(source, folder / name)
-                    copied.append(folder / name)
-                except OSError as error:
-                    failed.append(folder / name)
-                    printer.print(f"  (!) {folder}: {error}")
+        for folder, error in failures:
+            printer.print(f"  (!) {folder}: {error}")
         for path in copied:
             printer.print(f"  ✔ {path}")
     else:
