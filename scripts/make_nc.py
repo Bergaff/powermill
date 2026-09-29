@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config import OUTPUT_DIR                          # noqa: E402
 from src import pm_com, pm_nc                           # noqa: E402
 from src.applog import start_log                        # noqa: E402
+from src import console
 from src.console import Wizard, read_line               # noqa: E402
 
 REPORT_FILE = OUTPUT_DIR / "pm_nc_report.txt"
@@ -30,8 +31,10 @@ def ask_yes_no(prompt: str) -> bool | None:
             return None
         answer = (text or "").strip().lower()
         if answer in ("да", "д", "yes", "y", "1"):
+            print()
             return True
         if answer in ("", "нет", "н", "no", "n", "0"):
+            print()
             return False
         print("  Ответь «да» или «нет» (Enter — нет).")
 
@@ -94,11 +97,11 @@ def main() -> int:
     postprocessors = pm_nc.find_postprocessors()
     if postprocessors:
         print("  Найденные постпроцессоры (.pmoptz):")
-        for path in postprocessors[:8]:
-            print(f"    • {path}")
-        if len(postprocessors) > 8:
-            print(f"    … ещё {len(postprocessors) - 8}")
-        print("    (путь можно скопировать в ответ про постпроцессор)")
+        for index, path in enumerate(postprocessors[:12], start=1):
+            print(f"    {index}. {path}")
+        if len(postprocessors) > 12:
+            print(f"    … ещё {len(postprocessors) - 12}")
+        print("    (номер можно вписать в ответ про постпроцессор — или путь)")
     else:
         print("  Постпроцессоры (.pmoptz) не нашлись.")
         print("  Искал: папку данных, установку PowerMill (file\\proc) и утилиту")
@@ -156,6 +159,17 @@ def main() -> int:
         for problem in problems:
             print(f"      • {problem}")
         return 1
+
+    if plan.postprocessor is None and postprocessors:
+        text = read_line("  Номер из списка или путь к .pmoptz, Enter — не задавать: ")
+        if text is not None and text.strip():
+            number = console.pick_index(text, len(postprocessors))
+            chosen = postprocessors[number] if number is not None else Path(
+                text.strip().strip('"'))
+            if chosen.exists():
+                plan.postprocessor = chosen
+            else:
+                print(f"  (!) Такого файла нет: {chosen}")
 
     if plan.postprocessor is None:
         print("  (!) Постпроцессор не задан. Если в проекте его тоже нет (новый проект),")

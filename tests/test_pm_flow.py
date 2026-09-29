@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from src import pm_check, pm_flow, pm_nc, pm_operation, pml_vocab
+from src import console, pm_check, pm_flow, pm_nc, pm_operation, pml_vocab
 
 
 def request(**kwargs) -> pm_flow.FlowRequest:
@@ -354,3 +354,50 @@ def test_script_asks_for_the_postprocessor_before_nc():
     assert "pm_nc.saved_post()" in script
     assert "find_postprocessors" in script
     assert "NC пропущена: не задан постпроцессор" in script   # честно, а не падение
+
+
+# --------------------------------------------------------------------------
+# мелочи, которые видно в живом логе
+# --------------------------------------------------------------------------
+def test_report_says_when_something_was_skipped():
+    """«Дошёл до конца» не должно звучать как «всё сделано»."""
+    req = request()
+    report = pm_flow.FlowReport(request=req)
+    report.add("Операция: Инструмент", "ok", "создан")
+    report.add("NC-программа", "skip", "не задан постпроцессор")
+    report.finished = True
+    text = report.format()
+    assert "НЕ всё сделано" in text
+    assert "• NC-программа: не задан постпроцессор" in text
+
+
+def test_report_is_calm_when_everything_is_done():
+    report = pm_flow.FlowReport(request=request())
+    report.add("Операция: Инструмент", "ok", "создан")
+    report.finished = True
+    assert "Итог: поток доведён до конца" in report.format()
+
+
+def test_pick_index_understands_numbers_only():
+    assert console.pick_index("3", 5) == 2
+    assert console.pick_index(" 1 ", 5) == 0
+    assert console.pick_index("0", 5) is None
+    assert console.pick_index("6", 5) is None
+    assert console.pick_index("C:/posts/fanuc.pmoptz", 5) is None
+    assert console.pick_index("", 5) is None
+
+
+def test_scripts_offer_a_numbered_postprocessor_choice():
+    base = Path(__file__).resolve().parent.parent.joinpath("scripts")
+    for name in ("make_flow.py", "make_nc.py"):
+        script = base.joinpath(name).read_text(encoding="utf-8")
+        assert "Номер из списка" in script, name
+        assert "pick_index" in script, name
+
+
+def test_yes_no_prompts_end_with_a_newline():
+    """В живом логе три вопроса слипались в одну строку."""
+    base = Path(__file__).resolve().parent.parent.joinpath("scripts")
+    for name in ("make_flow.py", "make_nc.py"):
+        script = base.joinpath(name).read_text(encoding="utf-8")
+        assert 'if answer in ("да", "д", "yes", "y", "1"):\n            print()' in script, name

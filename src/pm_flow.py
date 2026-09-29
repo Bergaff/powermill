@@ -121,8 +121,18 @@ class FlowReport:
                 toolpaths=[self.request.toolpath_name] if self.request else [],
                 postprocessor=self.request.postprocessor if self.request else None)))
         lines.append("")
-        lines.append("Итог: " + ("поток доведён до конца"
-                                 if self.finished else "поток остановлен — см. ✘ выше"))
+        # «доведён до конца» и «всё сделано» — разные вещи: пропущенная NC или
+        # неподтверждённый расчёт должны быть видны прямо в итоге, а не только
+        # строчкой «•» выше.
+        skipped = any(status in ("skip", "fail") for _step, status, _text in self.steps)
+        if not self.finished:
+            conclusion = "поток остановлен — см. ✘ выше"
+        elif skipped:
+            conclusion = ("поток дошёл до конца, но НЕ всё сделано —"
+                          " смотри пометки «•» и «✘» выше")
+        else:
+            conclusion = "поток доведён до конца"
+        lines.append("Итог: " + conclusion)
         if self.warnings:
             lines.append("")
             lines.append("На что посмотреть:")

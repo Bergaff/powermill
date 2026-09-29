@@ -19,6 +19,7 @@ from config import OUTPUT_DIR                          # noqa: E402
 from src import pml_files                              # noqa: E402
 from src import pm_check, pm_com, pm_flow, pm_nc, pm_operation   # noqa: E402
 from src.applog import start_log                        # noqa: E402
+from src import console
 from src.console import Wizard, read_line               # noqa: E402
 
 
@@ -29,8 +30,10 @@ def ask_yes_no(prompt: str) -> bool | None:
             return None
         answer = (text or "").strip().lower()
         if answer in ("да", "д", "yes", "y", "1"):
+            print()
             return True
         if answer in ("", "нет", "н", "no", "n", "0"):
+            print()
             return False
         print("  Ответь «да» или «нет» (Enter — нет).")
 
@@ -374,17 +377,21 @@ def main() -> int:
             found = pm_nc.find_postprocessors()
             print("  (!) Постпроцессор не задан, а без него PowerMill файл не пишет.")
             if found:
-                print("      Нашёл на компьютере (можно скопировать путь):")
-                for path in found[:8]:
-                    print(f"        • {path}")
+                print("      Нашёл на компьютере — можно выбрать номером:")
+                for index, path in enumerate(found[:12], start=1):
+                    print(f"        {index}. {path}")
+                if len(found) > 12:
+                    print(f"        … ещё {len(found) - 12}")
             else:
                 print("      Не нашёл .pmoptz ни в папке данных, ни в установке")
                 print("      PowerMill (file\\proc), ни в утилите постпроцессоров.")
             print(f"      Путь можно вписать в {pm_nc.POST_FILE} — и запустить заново.")
-            text = read_line("  Путь к файлу постпроцессора (.pmoptz),"
+            text = read_line("  Номер из списка или путь к .pmoptz,"
                              " Enter — пропустить NC: ")
             if text is not None and text.strip():
-                post = Path(text.strip().strip('"'))
+                number = console.pick_index(text, len(found))
+                post = found[number] if number is not None else Path(
+                    text.strip().strip('"'))
                 if post.exists():
                     pm_nc.save_post(post)
                     print(f"  Запомнил постпроцессор: {pm_nc.POST_FILE}")

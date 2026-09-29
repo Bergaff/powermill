@@ -121,3 +121,17 @@ def read_line(prompt: str) -> str | None:
     except (EOFError, KeyboardInterrupt):
         print()
         return None
+
+
+def pick_index(text: str, count: int) -> int | None:
+    """Номер из ответа (1..count) — или None, если это не номер.
+
+    Нужно, чтобы список постпроцессоров можно было выбрать цифрой, а не
+    копировать длинный путь руками.
+    """
+    chunk = (text or "").strip()
+    if chunk.isdigit():
+        index = int(chunk)
+        if 1 <= index <= count:
+            return index - 1
+    return None
